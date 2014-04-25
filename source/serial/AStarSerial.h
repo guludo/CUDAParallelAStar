@@ -2,7 +2,7 @@
 
 #define AS_CLOSEDSET_CHUNK_SIZE 100
 #define AS_QUEUE_INITIAL_CAPACITY 1000
-#define AS_QUEUE_CHUNK_SIZE 100
+#define AS_QUEUE_ADITIONAL_CAPACITY 500
 #define AS_STATUS_IDLE 1
 #define AS_STATUS_IN_PATH 2
 
@@ -35,7 +35,7 @@ void AS_initConfig(AS_Config * config);
 /**
  * Performs the A* Search. The parameter config defines different parameters for the search.
  */
-AS_NodePointer * AS_search(AS_Config config);
+AS_NodePointer * AS_search(AS_Config * config);
 /**
  * Returns the NULL ended array of the path found to the goal.
  * And also clears those nodes in the tree that are not part of the path.
@@ -45,7 +45,7 @@ AS_NodePointer * AS_searchResult(AS_Node * node);
 /**
  * Creates a new node and defines its default values.
  */
-AS_Node * newASNode(double heuristic, double cost, AS_Node * parent);
+AS_Node * newASNode(double heuristic = 0, double cost = 1, AS_Node * parent = NULL);
 /**
  * Frees a node.
  */

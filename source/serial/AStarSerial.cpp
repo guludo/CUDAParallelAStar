@@ -20,8 +20,12 @@ Queue * newQueue(int capacity){
 
 void Queue_insert(Queue * queue, AS_NodePointer node){
 	if(queue->index >= queue->capacity){
-		fprintf(stderr, "Queue overflow.\n");
-		exit(1);
+		queue->list = (AS_NodePointer *) realloc(queue->list, sizeof(AS_NodePointer)*(queue->capacity+AS_QUEUE_ADITIONAL_CAPACITY));
+		if(!queue->list){
+			fprintf(stderr, "Error on increasing queue capacity.\n");
+			exit(1);			
+		}
+		queue->capacity += AS_QUEUE_ADITIONAL_CAPACITY;
 	}
 	int index = queue->index;
 	queue->index++;
@@ -174,33 +178,34 @@ AS_NodePointer * AS_searchResult(AS_Node * node){
 			break;
 		}
 	}
+	
 	AS_freeTree(n);
 	
 	return path;
 }
 
-AS_NodePointer * AS_search(AS_Config config){
-	ClosedSet * closedSet = newClosedSet(config.areSameStates, config.closedSetChunkSize);
-	Queue * queue = newQueue(config.queueInitialCapacity);
+AS_NodePointer * AS_search(AS_Config * config){
+	ClosedSet * closedSet = newClosedSet(config->areSameStates, config->closedSetChunkSize);
+	Queue * queue = newQueue(config->queueInitialCapacity);
 	
-	Queue_insert(queue, config.startNode);
+	Queue_insert(queue, config->startNode);
 	
 	
 	while(true){
 		if(Queue_isEmpty(queue)){
-			AS_freeTree(config.startNode);
+			AS_freeTree(config->startNode);
 			return NULL;
 		}
 		
 		AS_Node * node = Queue_remove(queue);
 		
-		if(config.isGoalState(node->state)){
+		if(config->isGoalState(node->state)){
 			return AS_searchResult(node);
 		}
 		
 		ClosedSet_add(closedSet, node);
 		
-		AS_NodePointer * children = config.expandNode(node);
+		AS_NodePointer * children = config->expandNode(node);
 		int childrenLength = 0;
 		int i = 0;
 		while(children[i]){
@@ -219,7 +224,7 @@ AS_NodePointer * AS_search(AS_Config config){
 			node->children = new AS_NodePointer[childrenLength];
 			int k = 0;
 			for(int j = 0; j<i; j++){
-				if(children[i]){
+				if(children[j]){
 					node->children[k] = children[j];
 					k++;
 				}
@@ -228,7 +233,7 @@ AS_NodePointer * AS_search(AS_Config config){
 	}
 }
 
-AS_Node * newASNode(double heuristic = 0, double cost = 1, AS_Node * parent = NULL){
+AS_Node * newASNode(double heuristic, double cost, AS_Node * parent){
 	AS_Node * node = new AS_Node;
 	node->data = NULL;
 	node->state = NULL;
@@ -331,9 +336,4 @@ void testClosedSet(){
 	printf("\tHas node (expected YES): %s\n", hasNode ? "YES" : "NO");
 	
 	ClosedSet_free(cs);
-}
-
-int main(){
-	
-	return 0;
 }
