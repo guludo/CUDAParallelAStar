@@ -1,7 +1,7 @@
 CUDAParallelAStar
 =================
 
-By Gustavo Sousa <gu_ludo@yahoo.com.br> and Xuanyu Zhong.
+By Gustavo Sousa &lt;gu_ludo@yahoo.com.br&gt; and Xuanyu Zhong.
 
 Class Project for CSC267, Spring 2014, University of California at Berkeley.
 
