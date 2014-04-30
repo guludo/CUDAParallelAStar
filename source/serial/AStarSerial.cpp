@@ -10,22 +10,23 @@
 using namespace std;
 
 
-Queue * newQueue(int capacity){
+Queue * newQueue(int capacity, int increaseCapacity){
 	Queue * queue = new Queue;
 	queue->capacity = capacity+1;
-	queue->list = new AS_NodePointer[queue->capacity];
+	queue->increaseCapacity = increaseCapacity;
+	queue->list = (AS_NodePointer *) malloc(sizeof(AS_NodePointer)*(queue->capacity));
 	queue->index = 1;
 	return queue;
 }
 
 void Queue_insert(Queue * queue, AS_NodePointer node){
 	if(queue->index >= queue->capacity){
-		queue->list = (AS_NodePointer *) realloc(queue->list, sizeof(AS_NodePointer)*(queue->capacity+AS_QUEUE_ADITIONAL_CAPACITY));
+		queue->list = (AS_NodePointer *) realloc(queue->list, sizeof(AS_NodePointer)*(queue->capacity+AS_QUEUE_INCREASE_CAPACITY));
 		if(!queue->list){
 			fprintf(stderr, "Error on increasing queue capacity.\n");
 			exit(1);			
 		}
-		queue->capacity += AS_QUEUE_ADITIONAL_CAPACITY;
+		queue->capacity += AS_QUEUE_INCREASE_CAPACITY;
 	}
 	int index = queue->index;
 	queue->index++;
@@ -76,7 +77,7 @@ AS_NodePointer Queue_remove(Queue * queue){
 }
 
 void Queue_free(Queue * queue){
-	delete queue->list;
+	free(queue->list);
 	delete queue;
 }
 
@@ -95,7 +96,7 @@ ClosedSet * newClosedSet(bool (* areSameStates)(void * stateA, void * stateB), i
 
 void ClosedSet_freeList(ClosedSetList * list){
 	if(list->next) ClosedSet_freeList(list->next);
-	delete list->nodes;
+	delete [] list->nodes;
 	delete list;
 }
 
@@ -139,6 +140,7 @@ bool ClosedSet_hasNode(ClosedSet * closedSet, AS_NodePointer node){
 void AS_initConfig(AS_Config * config){
 	config->closedSetChunkSize = AS_CLOSEDSET_CHUNK_SIZE;
 	config->queueInitialCapacity = AS_QUEUE_INITIAL_CAPACITY;
+	config->queueIncreaseCapacity = AS_QUEUE_INCREASE_CAPACITY;
 }
 
 void AS_freeTree(AS_Node * root){
@@ -156,7 +158,6 @@ void AS_freeTree(AS_Node * root){
 AS_NodePointer * AS_searchResult(AS_Node * node){
 	/* Count the number of nodes */
 	AS_Node * n = node;
-	AS_Node * parent;
 	int count = 0;
 	while(n){
 		count++;
@@ -185,8 +186,10 @@ AS_NodePointer * AS_searchResult(AS_Node * node){
 }
 
 AS_NodePointer * AS_search(AS_Config * config){
+	AS_NodePointer * path = NULL;
+	
 	ClosedSet * closedSet = newClosedSet(config->areSameStates, config->closedSetChunkSize);
-	Queue * queue = newQueue(config->queueInitialCapacity);
+	Queue * queue = newQueue(config->queueInitialCapacity, config->queueIncreaseCapacity);
 	
 	Queue_insert(queue, config->startNode);
 	
@@ -194,13 +197,14 @@ AS_NodePointer * AS_search(AS_Config * config){
 	while(true){
 		if(Queue_isEmpty(queue)){
 			AS_freeTree(config->startNode);
-			return NULL;
+			break;
 		}
 		
 		AS_Node * node = Queue_remove(queue);
 		
 		if(config->isGoalState(node->state)){
-			return AS_searchResult(node);
+			path = AS_searchResult(node);
+			break;
 		}
 		
 		ClosedSet_add(closedSet, node);
@@ -230,7 +234,20 @@ AS_NodePointer * AS_search(AS_Config * config){
 				}
 			}
 		}
+		free(children);
 	}
+	
+	Queue_free(queue);
+	ClosedSet_free(closedSet);
+	return path;
+}
+
+int deb = 0;
+void AS_freePath(AS_NodePointer * path){
+	for(int i = 0; path[i]; i++){
+		ASNode_free(path[i]);
+	}
+	delete [] path;
 }
 
 AS_Node * newASNode(double heuristic, double cost, AS_Node * parent){
@@ -255,11 +272,12 @@ void ASNode_free(AS_Node * node){
 		free(node->data);
 		node->data = NULL;
 	}
+	delete [] node->children;
 	delete node;
 }
 
 void testQueue(){
-	Queue * q = newQueue(1000);
+	Queue * q = newQueue(1000, 100);
 	
 	printf("Testing with only one element:\n");
 	printf("\tInserting...\n");

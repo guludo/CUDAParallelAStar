@@ -1,8 +1,8 @@
 #ifndef __AS__
 
-#define AS_CLOSEDSET_CHUNK_SIZE 100
+#define AS_CLOSEDSET_CHUNK_SIZE 1000
 #define AS_QUEUE_INITIAL_CAPACITY 1000
-#define AS_QUEUE_ADITIONAL_CAPACITY 500
+#define AS_QUEUE_INCREASE_CAPACITY 500
 #define AS_STATUS_IDLE 1
 #define AS_STATUS_IN_PATH 2
 
@@ -26,6 +26,7 @@ typedef struct {
 	AS_NodePointer *	(* expandNode)(AS_Node * node);
 	int			closedSetChunkSize;
 	int			queueInitialCapacity;
+	int			queueIncreaseCapacity;
 } AS_Config;
 
 /**
@@ -42,6 +43,11 @@ AS_NodePointer * AS_search(AS_Config * config);
  * The parameter node is the goal leaf node in the tree.
  */
 AS_NodePointer * AS_searchResult(AS_Node * node);
+
+/**
+ * Frees the path created by AS_searchResult.
+ */
+void AS_freePath(AS_NodePointer * path);
 /**
  * Creates a new node and defines its default values.
  */
