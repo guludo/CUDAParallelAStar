@@ -1,5 +1,5 @@
 
-CC = g++ -O3
+CC = g++ -O3 -g
 
 TARGETS=serial
 

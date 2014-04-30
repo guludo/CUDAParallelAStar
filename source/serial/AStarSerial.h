@@ -55,5 +55,14 @@ void ASNode_free(AS_Node * node);
  */
 void AS_freeTree(AS_Node * root);
 
+/**
+ * Cleans up dynamic memory
+ */
+void cleanMem();
+
+/**
+ * Cleans up path result
+ */
+void cleanPath(AS_NodePointer * path);
 
 #endif

@@ -40,7 +40,7 @@ double getHeuristic(State * state){
 }
 
 AS_Node * createNode(int x, int y){
-	State * state = new State;
+	State * state = (State *) malloc(sizeof(State));
 	state->x = x;
 	state->y = y;
 	AS_Node * node = newASNode(getHeuristic(state));
@@ -54,7 +54,7 @@ AS_NodePointer * expandNode(AS_Node * node){
 	int y = state->y;
 	int d = dimension;
 	
-	AS_NodePointer * nodeList = new AS_NodePointer[9];
+	AS_NodePointer * nodeList = (AS_NodePointer *) malloc(sizeof(AS_NodePointer)*9);
 	int count = 0;
 	
 	if(x -2 >= 0) {
@@ -167,6 +167,9 @@ int main(int argc, char **argv){
 	}else{
 		printf("Path not found from (%d,%d) to position (%d, %d):\n", start.x, start.y, goal.x, goal.y);
 	}
-	
+
+	// cleaning the memory
+	cleanPath(path);
+	cleanMem();
 	return 0;
 }

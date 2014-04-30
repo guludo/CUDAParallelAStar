@@ -8,12 +8,13 @@
 
 
 using namespace std;
-
+Queue * queue;
+ClosedSet * closedSet;
 
 Queue * newQueue(int capacity){
-	Queue * queue = new Queue;
+	queue = new Queue;
 	queue->capacity = capacity+1;
-	queue->list = new AS_NodePointer[queue->capacity];
+	queue->list = (AS_NodePointer *) malloc(sizeof(AS_NodePointer)*(queue->capacity));
 	queue->index = 1;
 	return queue;
 }
@@ -76,12 +77,12 @@ AS_NodePointer Queue_remove(Queue * queue){
 }
 
 void Queue_free(Queue * queue){
-	delete queue->list;
+	free(queue->list);
 	delete queue;
 }
 
 ClosedSet * newClosedSet(bool (* areSameStates)(void * stateA, void * stateB), int chunkSize = AS_CLOSEDSET_CHUNK_SIZE){
-	ClosedSet * closedSet = new ClosedSet;
+	closedSet = new ClosedSet;
 	closedSet->list = new ClosedSetList;
 	closedSet->currentList = closedSet->list;
 	closedSet->chunkSize = chunkSize;
@@ -95,7 +96,7 @@ ClosedSet * newClosedSet(bool (* areSameStates)(void * stateA, void * stateB), i
 
 void ClosedSet_freeList(ClosedSetList * list){
 	if(list->next) ClosedSet_freeList(list->next);
-	delete list->nodes;
+	delete [] list->nodes;
 	delete list;
 }
 
@@ -156,7 +157,6 @@ void AS_freeTree(AS_Node * root){
 AS_NodePointer * AS_searchResult(AS_Node * node){
 	/* Count the number of nodes */
 	AS_Node * n = node;
-	AS_Node * parent;
 	int count = 0;
 	while(n){
 		count++;
@@ -230,6 +230,7 @@ AS_NodePointer * AS_search(AS_Config * config){
 				}
 			}
 		}
+		free(children);
 	}
 }
 
@@ -255,7 +256,23 @@ void ASNode_free(AS_Node * node){
 		free(node->data);
 		node->data = NULL;
 	}
+	delete [] node->children;
 	delete node;
+}
+
+void cleanMem() {
+	Queue_free(queue);
+	ClosedSet_free(closedSet);
+}
+
+void cleanPath(AS_NodePointer * path) {
+	delete [] path[0]->children;
+	delete path[0];
+
+	for (int i = 1; path[i]; i++) {
+		ASNode_free(path[i]);
+	}
+	delete [] path;
 }
 
 void testQueue(){
