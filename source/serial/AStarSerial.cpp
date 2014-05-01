@@ -193,8 +193,9 @@ AS_NodePointer * AS_search(AS_Config * config){
 	
 	Queue_insert(queue, config->startNode);
 	
-	
+	int loopCount = 0;
 	while(true){
+		loopCount++;
 		if(Queue_isEmpty(queue)){
 			AS_freeTree(config->startNode);
 			break;
@@ -236,6 +237,8 @@ AS_NodePointer * AS_search(AS_Config * config){
 		}
 		free(children);
 	}
+	
+	printf("loop count = %d\n", loopCount);
 	
 	Queue_free(queue);
 	ClosedSet_free(closedSet);
