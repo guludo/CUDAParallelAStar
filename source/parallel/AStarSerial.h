@@ -1,14 +1,29 @@
-#ifndef __AS__
+#ifndef __ASTARSERIAL_H__
+#define __ASTARSERIAL_H__
 
 #define AS_CLOSEDSET_CHUNK_SIZE 100
 #define AS_QUEUE_INITIAL_CAPACITY 1000
 #define AS_QUEUE_ADITIONAL_CAPACITY 500
 #define AS_STATUS_IDLE 1
 #define AS_STATUS_IN_PATH 2
+#define NUM_THREADS 8
+#define NUM_CHOICES 16
+
+
+typedef struct{
+	int x;
+	int y;
+} State;
+
+extern State goal;
+extern State start;
+extern int dimension;
 
 typedef struct _AS_Node {
 	struct _AS_Node * parent;
 	void * state;
+	State cur;
+	State prev;
 	void * data;
 	double heuristic;
 	double cost;
@@ -64,6 +79,10 @@ void cleanMem();
  * Cleans up path result
  */
 void cleanPath(AS_NodePointer * path);
+
+double getHeuristic(State * state); 
+
+AS_Node * createNode(State s);
 
 #endif
 

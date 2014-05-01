@@ -11,6 +11,10 @@ using namespace std;
 Queue * queue;
 ClosedSet * closedSet;
 
+State goal;
+State start;
+int dimension;
+
 Queue * newQueue(int capacity){
 	queue = new Queue;
 	queue->capacity = capacity+1;
@@ -184,54 +188,159 @@ AS_NodePointer * AS_searchResult(AS_Node * node){
 	return path;
 }
 
+__device__ void createNode_gpu(AS_Node * node, int size, int x, int y, State * result, int * count) {
+	// if this is the previous step from the same node, should not pursue
+	if (x == node[blockIdx.x].prev.x && y == node[blockIdx.x].prev.y)
+		return;
+	// if this is the same location from the same batch, should not pursue
+	for (int i = 0; i < size; i++) {
+		if (x == node[i].cur.x && y == node[i].cur.y) {
+			return;
+		}
+	}
+	result[blockIdx.x*NUM_CHOICES+*count].x = x;
+	result[blockIdx.x*NUM_CHOICES+*count].y = y;
+	*count = *count + 1;
+}
+
+__device__ void expandNode_gpu(AS_Node * node, int size, State * result, int * resultSize, int dim) {
+	int x = node[blockIdx.x].cur.x;
+	int y = node[blockIdx.x].cur.y;
+	int d = dim;
+	int count = 0;
+
+	if(x -2 >= 0) {
+		if(y - 2 >= 0){
+			createNode_gpu(node, size, x-2, y-1, result, &count);
+			createNode_gpu(node, size, x-1, y-2, result, &count);
+		}else if(y - 1 >= 0){
+			createNode_gpu(node, size,x-2, y-1, result, &count);				
+		}
+		if(y + 2 < d){
+			createNode_gpu(node, size,x-2, y+1, result, &count);
+			createNode_gpu(node, size,x-1, y+2, result, &count);
+		}else if(y + 1 < d){
+			createNode_gpu(node, size,x-2, y+1, result, &count);
+		}
+	}else if(x -1 >= 0){
+		if(y - 2 >= 0){
+			createNode_gpu(node, size,x-1, y-2, result, &count);
+		}
+		if(y + 2 < d){
+			createNode_gpu(node, size,x-1, y+2, result, &count);
+		}
+	}
+	
+	if(x + 2 < d){
+		if(y - 2 >= 0){
+			createNode_gpu(node, size,x+2, y-1, result, &count);
+			createNode_gpu(node, size,x+1, y-2, result, &count);
+		}else if(y - 1 >= 0){
+			createNode_gpu(node, size,x+2, y-1, result, &count);			
+		}
+		if(y + 2 < d){
+			createNode_gpu(node, size,x+2, y+1, result, &count);
+			createNode_gpu(node, size,x+1, y+2, result, &count);
+		}else if(y + 1 < d){
+			createNode_gpu(node, size,x+2, y+1, result, &count);
+		}
+	}else if(x + 1 < d){
+		if(y - 2 >= 0){
+			createNode_gpu(node, size,x+1, y-2, result, &count);
+		}
+		if(y + 2 < d){
+			createNode_gpu(node, size,x+1, y+2, result, &count);
+		}
+	}
+	resultSize[blockIdx.x] = count;
+}
+
+__global__ void AS_search_gpu (AS_Node * nodes, int size, State * result, int * resultSize, int dim) {
+	int tid = blockIdx.x;
+	if (tid >= size)
+		return;
+	expandNode_gpu(nodes, size, result, resultSize, dim);
+}
+
 AS_NodePointer * AS_search(AS_Config * config){
-	ClosedSet * closedSet = newClosedSet(config->areSameStates, config->closedSetChunkSize);
+	//ClosedSet * closedSet = newClosedSet(config->areSameStates, config->closedSetChunkSize);
 	Queue * queue = newQueue(config->queueInitialCapacity);
-	
+
 	Queue_insert(queue, config->startNode);
+
+	// size of the batch
+	int nodeBatchSize;
+	AS_Node ** nodes = (AS_Node **) malloc (sizeof(AS_Node*) * NUM_THREADS);
 	
-	
-	while(true){
+	// one batch of nodes retrieved from the heap
+	AS_Node * nodeBatch = (AS_Node *) malloc (sizeof(AS_Node) * NUM_THREADS);
+	State * result = (State *) malloc (sizeof(State) * NUM_THREADS * NUM_CHOICES);
+	int * resultSize = (int *) malloc (sizeof(int) * NUM_THREADS);
+
+	// one batch of nodes in device
+	AS_Node * d_nodeBatch;
+	State * d_result;
+	int * d_resultSize;
+
+	cudaMalloc(&d_nodeBatch, sizeof(AS_Node) * NUM_THREADS);
+	cudaMalloc(&d_result, sizeof(State) * NUM_THREADS * NUM_CHOICES);
+	cudaMalloc(&d_resultSize, sizeof(int) * NUM_THREADS);
+
+	while (true) {
+		// no path found
+		printf("%d th iteration\n", queue->index);
 		if(Queue_isEmpty(queue)){
 			AS_freeTree(config->startNode);
 			return NULL;
 		}
-		
-		AS_Node * node = Queue_remove(queue);
-		
-		if(config->isGoalState(node->state)){
-			return AS_searchResult(node);
+		nodeBatchSize = queue->index > NUM_THREADS ? NUM_THREADS : queue->index - 1;		
+
+		for (int i = 0; i < nodeBatchSize; i++) {
+			nodes[i] = Queue_remove(queue);
+			nodeBatch[i] = *(nodes[i]);
 		}
-		
-		ClosedSet_add(closedSet, node);
-		
-		AS_NodePointer * children = config->expandNode(node);
-		int childrenLength = 0;
-		int i = 0;
-		while(children[i]){
-			if(ClosedSet_hasNode(closedSet, children[i])){
-				ASNode_free(children[i]);
-				children[i] = NULL;
-			}else{
-				children[i]->parent = node;
-				Queue_insert(queue, children[i]);
-				childrenLength++;
-			}
-			i++;
-		}
-		node->childrenLength = childrenLength;
-		if(childrenLength){
-			node->children = new AS_NodePointer[childrenLength];
-			int k = 0;
-			for(int j = 0; j<i; j++){
-				if(children[j]){
-					node->children[k] = children[j];
-					k++;
-				}
+
+		cudaMemcpy(d_nodeBatch, nodeBatch, sizeof(AS_Node) * nodeBatchSize, cudaMemcpyHostToDevice);
+
+		AS_search_gpu <<<NUM_THREADS, 1>>> (nodeBatch, nodeBatchSize, d_result, d_resultSize, dimension);
+		cudaDeviceSynchronize();
+
+		cudaMemcpy(result, d_result, sizeof(State) * NUM_THREADS * NUM_CHOICES, cudaMemcpyDeviceToHost);
+		cudaMemcpy(resultSize, d_resultSize, sizeof(int) * NUM_THREADS, cudaMemcpyDeviceToHost);
+		for (int i =0; i < nodeBatchSize; i++) {
+			for (int j = 0; j < resultSize[i]; j++) {
+				AS_Node * created = createNode(result[i*NUM_CHOICES+j]);
+				created->parent = nodes[i];
+				created->prev.x = nodes[i]->cur.x;
+				created->prev.y = nodes[i]->cur.y;
+				Queue_insert(queue, created);
 			}
 		}
-		free(children);
 	}
+}
+
+double getHeuristic(State * state){
+	int dx = abs(goal.x - state->x);
+	int dy = abs(goal.y - state->y);
+	double h = (dx + dy)/3.0;
+	if((dx % 2 == 0) && ((dx/2)%2 == 0)){
+		h *= 0.9;
+	}
+	if((dy % 2 == 0) && ((dy/2)%2 == 0)){
+		h *= 0.9;
+	}
+	return h;
+}
+
+AS_Node * createNode(State s){
+	State * state = (State *) malloc(sizeof(State));
+	state->x = s.x;
+	state->y = s.y;
+	AS_Node * node = newASNode(getHeuristic(state));
+	node->state = state;
+	node->cur.x = s.x;
+	node->cur.y = s.y;
+	return node;
 }
 
 AS_Node * newASNode(double heuristic, double cost, AS_Node * parent){
@@ -256,7 +365,7 @@ void ASNode_free(AS_Node * node){
 		free(node->data);
 		node->data = NULL;
 	}
-	delete [] node->children;
+	//delete [] node->children;
 	delete node;
 }
 

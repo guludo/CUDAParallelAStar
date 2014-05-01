@@ -5,16 +5,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include "../serial/AStarSerial.h"
-
-typedef struct{
-	int x;
-	int y;
-} State;
-
-int dimension;
-State goal;
-State start;
+#include "../parallel/AStarSerial.h"
 
 bool areSameState(void * stateA, void * stateB){
 	State * a = (State *) stateA;
@@ -26,25 +17,14 @@ bool isGoalState(void * state){
 	return areSameState(state, &goal);
 }
 
-double getHeuristic(State * state){
-	int dx = abs(goal.x - state->x);
-	int dy = abs(goal.y - state->y);
-	double h = (dx + dy)/3.0;
-	if((dx % 2 == 0) && ((dx/2)%2 == 0)){
-		h *= 0.9;
-	}
-	if((dy % 2 == 0) && ((dy/2)%2 == 0)){
-		h *= 0.9;
-	}
-	return h;
-}
-
 AS_Node * createNode(int x, int y){
 	State * state = (State *) malloc(sizeof(State));
 	state->x = x;
 	state->y = y;
 	AS_Node * node = newASNode(getHeuristic(state));
 	node->state = state;
+	node->cur.x = x;
+	node->cur.y = y;
 	return node;
 }
 
@@ -173,4 +153,3 @@ int main(int argc, char **argv){
 	cleanMem();
 	return 0;
 }
-
