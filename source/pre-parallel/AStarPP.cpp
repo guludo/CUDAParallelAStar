@@ -333,36 +333,8 @@ AS_NodePointer * AS_search(AS_Config * config){
 				j++;
 			}
 			node->childrenLength = c;
-			realloc(node->children, c*sizeof(AS_NodePointer));
+			node->children = realloc(node->children, c*sizeof(AS_NodePointer));
 		}
-		/*
-		AS_NodePointer * children = config->expandNode(node);
-		int childrenLength = 0;
-		int i = 0;
-		while(children[i]){
-			if(ClosedSet_hasNode(closedSet, children[i])){
-				ASNode_free(children[i]);
-				children[i] = NULL;
-			}else{
-				children[i]->parent = node;
-				Queue_insert(queue, children[i]);
-				childrenLength++;
-			}
-			i++;
-		}
-		node->childrenLength = childrenLength;
-		if(childrenLength){
-			node->children = new AS_NodePointer[childrenLength];
-			int k = 0;
-			for(int j = 0; j<i; j++){
-				if(children[j]){
-					node->children[k] = children[j];
-					k++;
-				}
-			}
-		}
-		free(children);
-		*/
 	}
 	
 	printf("loop count = %d\n", loopCount);
