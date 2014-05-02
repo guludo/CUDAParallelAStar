@@ -333,7 +333,7 @@ AS_NodePointer * AS_search(AS_Config * config){
 				j++;
 			}
 			node->childrenLength = c;
-			node->children = realloc(node->children, c*sizeof(AS_NodePointer));
+			node->children = (AS_NodePointer *) realloc(node->children, c*sizeof(AS_NodePointer));
 		}
 	}
 	
