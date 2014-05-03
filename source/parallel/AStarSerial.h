@@ -7,7 +7,7 @@
 #define AS_STATUS_IDLE 1
 #define AS_STATUS_IN_PATH 2
 #define NUM_BLOCKS 8
-#define NUM_CHOICES 16
+#define NUM_CHOICES 8
 
 
 typedef struct{
@@ -83,7 +83,7 @@ void cleanPath(AS_NodePointer * path);
 
 double getHeuristic(State * state); 
 
-AS_Node * createNode(State s);
+AS_Node * createNode(int x, int y);
 
 #endif
 

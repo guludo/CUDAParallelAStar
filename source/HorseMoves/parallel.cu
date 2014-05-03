@@ -23,17 +23,6 @@ bool isGoalState(void * state){
 	return areSameState(state, &goal);
 }
 
-AS_Node * createNode(int x, int y){
-	State * state = (State *) malloc(sizeof(State));
-	state->x = x;
-	state->y = y;
-	AS_Node * node = newASNode(getHeuristic(state));
-	node->state = state;
-	node->cur.x = x;
-	node->cur.y = y;
-	return node;
-}
-
 AS_NodePointer * expandNode(AS_Node * node){
 	State * state = (State *) node->state;
 	int x = state->x;

@@ -188,80 +188,35 @@ AS_NodePointer * AS_searchResult(AS_Node * node){
 	return path;
 }
 
-__device__ void createNode_gpu(AS_Node * node, int size, int x, int y, State * result, int * count) {
-	// if this is the previous step from the same node, should not pursue
-	if (x == node[blockIdx.x].prev.x && y == node[blockIdx.x].prev.y)
+__device__ void expandNode_gpu(AS_Node * node, int size, bool * fillResult, int dim) {
+	int dx = (1 + threadIdx.x / 4);
+	int dy = 2 - threadIdx.x / 4;
+	if (threadIdx.x % 2) {
+		dy = - dy;
+	}
+	if ((threadIdx.x / 2) % 2) {
+		dx = - dx;
+	}
+	int x = node[blockIdx.x].cur.x + dx;
+	int y = node[blockIdx.x].cur.y + dy;
+	if (x < 0 || x >= dim || y < 0 || y >= dim || (x == node[blockIdx.x].prev.x && y == node[blockIdx.x].prev.y))
 		return;
-	// if this is the same location from the same batch, should not pursue
 	for (int i = 0; i < size; i++) {
 		if (x == node[i].cur.x && y == node[i].cur.y) {
 			return;
 		}
 	}
-	result[blockIdx.x*NUM_CHOICES+*count].x = x;
-	result[blockIdx.x*NUM_CHOICES+*count].y = y;
-	*count = *count + 1;
+	fillResult[blockIdx.x * blockDim.x + threadIdx.x] = true;
 }
 
-__device__ void expandNode_gpu(AS_Node * node, int size, State * result, int * resultSize, int dim) {
-	int x = node[blockIdx.x].cur.x;
-	int y = node[blockIdx.x].cur.y;
-	int d = dim;
-	int count = 0;
-
-	if(x -2 >= 0) {
-		if(y - 2 >= 0){
-			createNode_gpu(node, size, x-2, y-1, result, &count);
-			createNode_gpu(node, size, x-1, y-2, result, &count);
-		}else if(y - 1 >= 0){
-			createNode_gpu(node, size,x-2, y-1, result, &count);				
-		}
-		if(y + 2 < d){
-			createNode_gpu(node, size,x-2, y+1, result, &count);
-			createNode_gpu(node, size,x-1, y+2, result, &count);
-		}else if(y + 1 < d){
-			createNode_gpu(node, size,x-2, y+1, result, &count);
-		}
-	}else if(x -1 >= 0){
-		if(y - 2 >= 0){
-			createNode_gpu(node, size,x-1, y-2, result, &count);
-		}
-		if(y + 2 < d){
-			createNode_gpu(node, size,x-1, y+2, result, &count);
-		}
-	}
-	
-	if(x + 2 < d){
-		if(y - 2 >= 0){
-			createNode_gpu(node, size,x+2, y-1, result, &count);
-			createNode_gpu(node, size,x+1, y-2, result, &count);
-		}else if(y - 1 >= 0){
-			createNode_gpu(node, size,x+2, y-1, result, &count);			
-		}
-		if(y + 2 < d){
-			createNode_gpu(node, size,x+2, y+1, result, &count);
-			createNode_gpu(node, size,x+1, y+2, result, &count);
-		}else if(y + 1 < d){
-			createNode_gpu(node, size,x+2, y+1, result, &count);
-		}
-	}else if(x + 1 < d){
-		if(y - 2 >= 0){
-			createNode_gpu(node, size,x+1, y-2, result, &count);
-		}
-		if(y + 2 < d){
-			createNode_gpu(node, size,x+1, y+2, result, &count);
-		}
-	}
-	resultSize[blockIdx.x] = count;
-}
-
-__global__ void AS_search_gpu (AS_Node * nodes, int size, State * result, int * resultSize, int dim) {
+__global__ void AS_search_gpu (AS_Node * nodes, int size, bool * fillResult, int dim) {
 	if (blockIdx.x >= size)
 		return;
-	expandNode_gpu(nodes, size, result, resultSize, dim);
+	expandNode_gpu(nodes, size, fillResult, dim);
 }
 
 AS_NodePointer * AS_search(AS_Config * config){
+	// not using closedSet
 	//ClosedSet * closedSet = newClosedSet(config->areSameStates, config->closedSetChunkSize);
 	// the solution path
 	AS_NodePointer * path = NULL;
@@ -269,6 +224,8 @@ AS_NodePointer * AS_search(AS_Config * config){
 	Queue * queue = newQueue(config->queueInitialCapacity);
 	Queue_insert(queue, config->startNode);
 
+	int sign [2] = {-1, 1};
+	// whether path is found
 	bool found = false;
 	// size of the batch
 	int nodeBatchSize;
@@ -277,18 +234,15 @@ AS_NodePointer * AS_search(AS_Config * config){
 	// pool for each batch
 	// one batch of nodes retrieved from the heap
 	AS_Node * nodeBatch = (AS_Node *) malloc (sizeof(AS_Node) * NUM_BLOCKS);
-	// the state of newly created nodes
-	State * result = (State *) malloc (sizeof(State) * NUM_BLOCKS * NUM_CHOICES);
-	int * resultSize = (int *) malloc (sizeof(int) * NUM_BLOCKS);
-	
-	// one batch of nodes in device
+	// fill results of newly created nodes
+	bool * fillResult = (bool *) malloc (sizeof(bool) * NUM_BLOCKS * NUM_CHOICES);
+		
+	// one batch of nodes and fill results in device
 	AS_Node * d_nodeBatch;
-	State * d_result;
-	int * d_resultSize;
+	bool * d_fillResult;
 
 	cudaMalloc((void **)&d_nodeBatch, sizeof(AS_Node) * NUM_BLOCKS);
-	cudaMalloc((void **)&d_result, sizeof(State) * NUM_BLOCKS * NUM_CHOICES);
-	cudaMalloc((void **)&d_resultSize, sizeof(int) * NUM_BLOCKS);
+	cudaMalloc((void **)&d_fillResult, sizeof(bool) * NUM_BLOCKS * NUM_CHOICES);
 
 	while (true) {
 		// no path found
@@ -313,20 +267,27 @@ AS_NodePointer * AS_search(AS_Config * config){
 			break;
 
 		cudaMemcpy(d_nodeBatch, nodeBatch, sizeof(AS_Node) * nodeBatchSize, cudaMemcpyHostToDevice);
+		cudaMemset(d_fillResult, 0, sizeof(bool) * NUM_BLOCKS * NUM_CHOICES);
 
-		AS_search_gpu <<<NUM_BLOCKS, 1>>> (d_nodeBatch, nodeBatchSize, d_result, d_resultSize, dimension);
+		AS_search_gpu <<<NUM_BLOCKS, NUM_CHOICES>>> (d_nodeBatch, nodeBatchSize, d_fillResult, dimension);
 		cudaDeviceSynchronize();
 
-		cudaMemcpy(result, d_result, sizeof(State) * NUM_BLOCKS * NUM_CHOICES, cudaMemcpyDeviceToHost);
-		cudaMemcpy(resultSize, d_resultSize, sizeof(int) * NUM_BLOCKS, cudaMemcpyDeviceToHost);
+		cudaMemcpy(fillResult, d_fillResult, sizeof(bool) * NUM_BLOCKS * NUM_CHOICES, cudaMemcpyDeviceToHost);
 
 		for (int i =0; i < nodeBatchSize; i++) {
-			for (int j = 0; j < resultSize[i]; j++) {
-				AS_Node * created = createNode(result[i*NUM_CHOICES+j]);
-				created->parent = nodes[i];
-				created->prev.x = nodes[i]->cur.x;
-				created->prev.y = nodes[i]->cur.y;
-				Queue_insert(queue, created);
+			for (int j = 0; j < 8; j++) {
+				printf("%d: %d\n", i * NUM_CHOICES + j, fillResult[i * NUM_CHOICES + j]);
+				if (fillResult[i * NUM_CHOICES + j]) {
+					int dx = (1 + j / 4) * sign[(j / 2) % 2];
+					int dy = (2 - j / 4) * sign[j % 2];
+					int x = nodes[i]->cur.x;
+					int y = nodes[i]->cur.y;
+					AS_Node * created = createNode(x + dx, y + dy);
+					created->parent = nodes[i];
+					created->prev.x = x;
+					created->prev.y = y;
+					Queue_insert(queue, created);
+				}
 			}
 		}
 	}
@@ -347,14 +308,14 @@ double getHeuristic(State * state){
 	return h;
 }
 
-AS_Node * createNode(State s){
+AS_Node * createNode(int x, int y){
 	State * state = (State *) malloc(sizeof(State));
-	state->x = s.x;
-	state->y = s.y;
+	state->x = x;
+	state->y = y;
 	AS_Node * node = newASNode(getHeuristic(state));
 	node->state = state;
-	node->cur.x = s.x;
-	node->cur.y = s.y;
+	node->cur.x = x;
+	node->cur.y = y;
 	return node;
 }
 
