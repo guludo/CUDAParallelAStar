@@ -6,7 +6,7 @@
 #define AS_QUEUE_ADITIONAL_CAPACITY 500
 #define AS_STATUS_IDLE 1
 #define AS_STATUS_IN_PATH 2
-#define NUM_BLOCKS 8
+#define NUM_BLOCKS 1
 #define NUM_CHOICES 8
 
 

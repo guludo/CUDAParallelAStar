@@ -189,14 +189,9 @@ AS_NodePointer * AS_searchResult(AS_Node * node){
 }
 
 __device__ void expandNode_gpu(AS_Node * node, int size, bool * fillResult, int dim) {
-	int dx = (1 + threadIdx.x / 4);
-	int dy = 2 - threadIdx.x / 4;
-	if (threadIdx.x % 2) {
-		dy = - dy;
-	}
-	if ((threadIdx.x / 2) % 2) {
-		dx = - dx;
-	}
+	int dx = (1 + threadIdx.x / 4) * (1 - 2 * ((threadIdx.x / 2) % 2));
+	int dy = 2 - threadIdx.x / 4 * (1 - 2 *(threadIdx.x % 2));
+
 	int x = node[blockIdx.x].cur.x + dx;
 	int y = node[blockIdx.x].cur.y + dy;
 	if (x < 0 || x >= dim || y < 0 || y >= dim || (x == node[blockIdx.x].prev.x && y == node[blockIdx.x].prev.y))
@@ -224,7 +219,6 @@ AS_NodePointer * AS_search(AS_Config * config){
 	Queue * queue = newQueue(config->queueInitialCapacity);
 	Queue_insert(queue, config->startNode);
 
-	int sign [2] = {-1, 1};
 	// whether path is found
 	bool found = false;
 	// size of the batch
@@ -276,10 +270,9 @@ AS_NodePointer * AS_search(AS_Config * config){
 
 		for (int i =0; i < nodeBatchSize; i++) {
 			for (int j = 0; j < 8; j++) {
-				printf("%d: %d\n", i * NUM_CHOICES + j, fillResult[i * NUM_CHOICES + j]);
 				if (fillResult[i * NUM_CHOICES + j]) {
-					int dx = (1 + j / 4) * sign[(j / 2) % 2];
-					int dy = (2 - j / 4) * sign[j % 2];
+					int dx = (1 + j  / 4) * (1 - 2 * ((j / 2) % 2));
+					int dy = 2 - j / 4 * (1 - 2 *(j % 2));
 					int x = nodes[i]->cur.x;
 					int y = nodes[i]->cur.y;
 					AS_Node * created = createNode(x + dx, y + dy);
