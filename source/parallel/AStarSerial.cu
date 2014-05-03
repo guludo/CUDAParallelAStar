@@ -298,39 +298,16 @@ AS_NodePointer * AS_search(AS_Config * config){
 			return NULL;
 		}
 
-		int order = 0;
-		while (!Queue_isEmpty(queue)) {
-			nodes[order] = Queue_remove(queue);
+		nodeBatchSize = queue->index > NUM_BLOCKS ? NUM_BLOCKS : queue->index - 1;		
 
-			if (order == 0 || (order > 0 && !(config->areSameCost(nodes[order], nodes[order-1])))) {
-				nodeBatch[order] = *(nodes[order]);
-				order++;
-			}
-			else {
-				int i = order-1;
-				while (true) {
-					if (config->areSameState(nodes[order]->state, nodes[i]->state)) {
-						ASNode_free(nodes[order]);
-						break;
-					}
-					i--;
-					if (!(i >= 0 && config->areSameCost(nodes[order], nodes[i]))) {
-						nodeBatch[order] = *(nodes[order]);
-						order++;
-						break;
-					}
-				}
-			}
-			if (order == NUM_BLOCKS)
-				break;
-		}
-		nodeBatchSize = order;
 		for (int i = 0; i < nodeBatchSize; i++) {
+			nodes[i] = Queue_remove(queue);
 			if (config->isGoalState(nodes[i]->state)) {
 				path = AS_searchResult(nodes[i]);
 				found = true;
 				break;
 			}
+			nodeBatch[i] = *(nodes[i]);
 		}
 		if (found)
 			break;
