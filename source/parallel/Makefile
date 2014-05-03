@@ -5,7 +5,7 @@ TARGETS=AStarCUDA.o
 
 all: $(TARGETS)
 
-AStarCUDA.o: AStarCUDA.cu AStarCUDA.h ClosedSet.h Queue.h
+AStarCUDA.o: AStarCUDA.cu AStarCUDA.h Queue.h
 	$(CC) -c $<
 
 clean:

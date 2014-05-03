@@ -1,13 +1,10 @@
 #ifndef __ASTARCUDA_H__
 #define __ASTARCUDA_H__
 
-#define AS_CLOSEDSET_CHUNK_SIZE 100
 #define AS_QUEUE_INITIAL_CAPACITY 1000
 #define AS_QUEUE_ADITIONAL_CAPACITY 500
 #define AS_STATUS_IDLE 1
 #define AS_STATUS_IN_PATH 2
-#define NUM_BLOCKS 16
-#define NUM_CHOICES 8
 
 
 typedef struct{
@@ -86,4 +83,3 @@ double getHeuristic(State * state);
 AS_Node * createNode(int x, int y);
 
 #endif
-

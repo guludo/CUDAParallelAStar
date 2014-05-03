@@ -2,7 +2,7 @@
 CC = g++ -O3 -g
 NVCC = nvcc -O3 -g -arch sm_20
 
-TARGETS=serial parallel
+TARGETS=r serial parallel
 
 all: $(TARGETS)
 
@@ -24,4 +24,4 @@ serial.o: serial.cpp
 	$(CC) -c $<
 
 clean:
-	rm -f *.o $(TARGETS) *.exe.*
+	rm -f *.o $(TARGETS) *.exe.* ../parallel/*.o

@@ -3,15 +3,13 @@
 #include <stdio.h>
 #include <float.h>
 #include "AStarCUDA.h"
-#include "ClosedSet.h"
 #include "Queue.h"
 
 #define NUM_BLOCKS 16
 #define NUM_CHOICES 8
-#define DUPLICATE 1
+#define DUPLICATE 0
 
 Queue * queue;
-ClosedSet * closedSet;
 
 State goal;
 State start;
@@ -87,64 +85,7 @@ void Queue_free(Queue * queue){
 	delete queue;
 }
 
-ClosedSet * newClosedSet(bool (* areSameStates)(void * stateA, void * stateB), int chunkSize = AS_CLOSEDSET_CHUNK_SIZE){
-	closedSet = new ClosedSet;
-	closedSet->list = new ClosedSetList;
-	closedSet->currentList = closedSet->list;
-	closedSet->chunkSize = chunkSize;
-	closedSet->length = 0;
-	closedSet->areSameStates = areSameStates;
-	
-	closedSet->list->nodes = new AS_NodePointer[chunkSize];
-	closedSet->list->next = NULL;
-	return closedSet;
-}
-
-void ClosedSet_freeList(ClosedSetList * list){
-	if(list->next) ClosedSet_freeList(list->next);
-	delete [] list->nodes;
-	delete list;
-}
-
-void ClosedSet_free(ClosedSet * closedSet){
-	ClosedSet_freeList(closedSet->list);
-	delete closedSet;
-}
-
-void ClosedSet_add(ClosedSet * closedSet, AS_NodePointer node){
-	if(closedSet->length == 0){
-		closedSet->currentList->nodes[0] = node;
-	}else{
-		int index = closedSet->length % closedSet->chunkSize;
-		if(index == 0){
-			closedSet->currentList->next = new ClosedSetList;
-			closedSet->currentList = closedSet->currentList->next;
-			closedSet->currentList->nodes = new AS_NodePointer[closedSet->chunkSize];
-			closedSet->currentList->next = NULL;
-		}
-		closedSet->currentList->nodes[index] = node;
-	}
-	closedSet->length++;
-}
-
-bool ClosedSet_hasNode(ClosedSet * closedSet, AS_NodePointer node){
-	ClosedSetList * list = closedSet->list;
-	int chunkSize = closedSet->chunkSize;
-	int length = closedSet->length;
-	int count = 0;
-	while(list){
-		for(int i = 0; i<chunkSize && count<length; i++, count++){
-			if(closedSet->areSameStates(node->state, list->nodes[i]->state)){
-				return true;
-			}
-		}
-		list = list->next;
-	}
-	return false;
-}
-
 void AS_initConfig(AS_Config * config){
-	config->closedSetChunkSize = AS_CLOSEDSET_CHUNK_SIZE;
 	config->queueInitialCapacity = AS_QUEUE_INITIAL_CAPACITY;
 }
 
@@ -213,8 +154,6 @@ __global__ void AS_search_gpu (AS_Node * nodes, int size, bool * fillResult, int
 }
 
 AS_NodePointer * AS_search(AS_Config * config){
-	// not using closedSet
-	//ClosedSet * closedSet = newClosedSet(config->areSameStates, config->closedSetChunkSize);
 	// the solution path
 	AS_NodePointer * path = NULL;
 	
@@ -248,6 +187,7 @@ AS_NodePointer * AS_search(AS_Config * config){
 			return NULL;
 		}
 
+		// switch between two different modes
 		if (DUPLICATE) {
 			nodeBatchSize = queue->index > NUM_BLOCKS ? NUM_BLOCKS : queue->index - 1;		
 
@@ -289,6 +229,13 @@ AS_NodePointer * AS_search(AS_Config * config){
 					break;
 			}
 			nodeBatchSize = order;
+			for (int i = 0; i < nodeBatchSize; i++) {
+				if (config->isGoalState(nodes[i]->state)) {
+					path = AS_searchResult(nodes[i]);
+					found = true;
+					break;
+				}
+			}
 		}
 
 		if (found)
@@ -376,7 +323,6 @@ void ASNode_free(AS_Node * node){
 
 void cleanMem() {
 	Queue_free(queue);
-	//ClosedSet_free(closedSet);
 }
 
 void cleanPath(AS_NodePointer * path) {
@@ -427,45 +373,3 @@ void testQueue(){
 	
 	Queue_free(q);
 }
-
-bool testClosedSet_isSameState(void * stateA, void * stateB){
-	int a = *((int *) stateA);
-	int b = *((int *) stateB);
-	return a == b;
-}
-void testClosedSet(){
-	ClosedSet * cs = newClosedSet(&testClosedSet_isSameState);
-	AS_NodePointer n = newASNode();
-	int * x = new int;
-	*x = 1;
-	n->state = x;
-	
-	printf("Adding only one element...\n");
-	ClosedSet_add(cs, n);
-	bool hasNode = ClosedSet_hasNode(cs, n);
-	printf("\tHas node (expected YES): %s\n", hasNode ? "YES" : "NO");
-	
-	printf("Adding more 5 elements...\n");
-	for(int i = 0; i<5; i++){
-		AS_NodePointer n = newASNode();
-		int * x = new int;
-		*x = rand();
-		n->state = x;
-		ClosedSet_add(cs, n);
-	}
-	
-	printf("Adding more CHUNK SIZE number of elements...\n");
-	for(int i = 0; i<AS_CLOSEDSET_CHUNK_SIZE; i++){
-		n = newASNode();
-		x = new int;
-		*x = rand();
-		n->state = x;
-		ClosedSet_add(cs, n);
-	}
-	printf("Verifying if the closed set has the last element added...\n");
-	hasNode = ClosedSet_hasNode(cs, n);
-	printf("\tHas node (expected YES): %s\n", hasNode ? "YES" : "NO");
-	
-	ClosedSet_free(cs);
-}
-

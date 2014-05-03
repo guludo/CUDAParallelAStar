@@ -1,3 +1,8 @@
+#ifndef __QUEUE_H__
+#define __QUEUE_H__
+
+#include "AStarCUDA.h"
+
 typedef struct{
 	AS_NodePointer * list;
 	int capacity;
@@ -25,3 +30,4 @@ AS_NodePointer Queue_remove(Queue * queue);
  */
 void Queue_free(Queue * queue);
 
+#endif

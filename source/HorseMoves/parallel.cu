@@ -1,5 +1,5 @@
 /**
- * Serial implementation for Horse Moves.
+ * Parallel CUDA implementation for Horse Moves.
  */
 
 #include <stdlib.h>
