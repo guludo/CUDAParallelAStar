@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
+#include <sys/time.h>
 #include "../serial/AStarSerial.h"
 
 typedef struct{
@@ -138,6 +140,20 @@ char *read_string( int argc, char **argv, const char *option, char *default_valu
 	return default_value;
 }
 
+double read_timer( )
+{
+    static bool initialized = false;
+    static struct timeval start;
+    struct timeval end;
+    if( !initialized )
+    {
+        gettimeofday( &start, NULL );
+        initialized = true;
+    }
+    gettimeofday( &end, NULL );
+    return (end.tv_sec - start.tv_sec) + 1.0e-6 * (end.tv_usec - start.tv_usec);
+}
+
 int main(int argc, char **argv){
 	dimension = read_int(argc, argv, "-d", 12);
 	start.x = 0;
@@ -154,9 +170,9 @@ int main(int argc, char **argv){
 	AS_Node * startNode = newASNode(getHeuristic(&start));
 	startNode->state = &start;
 	config.startNode = startNode;
-	
+	double simulation_time = read_timer( );
 	AS_NodePointer * path = AS_search(&config);
-	
+	simulation_time = read_timer( ) - simulation_time;
 	if(path){
 		State * s = (State *) path[0]->state;
 		printf("Horse moves to go from position (%d,%d) to position (%d, %d):\n(%d, %d)", start.x, start.y, goal.x, goal.y, s->x, s->y);
@@ -167,6 +183,7 @@ int main(int argc, char **argv){
 	}else{
 		printf("Path not found from (%d,%d) to position (%d, %d):\n", start.x, start.y, goal.x, goal.y);
 	}
+		printf( "simulation time = %g seconds", simulation_time);
 
 	// cleaning the memory
 	cleanPath(path);

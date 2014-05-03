@@ -6,7 +6,7 @@
 #define AS_QUEUE_ADITIONAL_CAPACITY 500
 #define AS_STATUS_IDLE 1
 #define AS_STATUS_IN_PATH 2
-#define NUM_THREADS 8
+#define NUM_BLOCKS 8
 #define NUM_CHOICES 16
 
 
@@ -36,8 +36,9 @@ typedef AS_Node * AS_NodePointer;
 
 typedef struct {
 	AS_Node *	startNode;
-	bool		(* areSameStates)(void * stateA, void * stateB);
+	bool		(* areSameState)(void * stateA, void * stateB);
 	bool		(* isGoalState)(void * state);
+	bool		(* areSameCost)(AS_Node * a, AS_Node * b);
 	AS_NodePointer *	(* expandNode)(AS_Node * node);
 	int			closedSetChunkSize;
 	int			queueInitialCapacity;

@@ -192,6 +192,7 @@ AS_NodePointer * AS_search(AS_Config * config){
 	
 	
 	while(true){
+		printf("%d: queue size\n", queue->index);
 		if(Queue_isEmpty(queue)){
 			AS_freeTree(config->startNode);
 			return NULL;
