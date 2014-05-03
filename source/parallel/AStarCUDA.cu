@@ -2,12 +2,14 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <float.h>
-#include "AStarSerial.h"
+#include "AStarCUDA.h"
 #include "ClosedSet.h"
 #include "Queue.h"
 
+#define NUM_BLOCKS 16
+#define NUM_CHOICES 8
+#define DUPLICATE 1
 
-using namespace std;
 Queue * queue;
 ClosedSet * closedSet;
 
@@ -190,7 +192,7 @@ AS_NodePointer * AS_searchResult(AS_Node * node){
 
 __device__ void expandNode_gpu(AS_Node * node, int size, bool * fillResult, int dim) {
 	int dx = (1 + threadIdx.x / 4) * (1 - 2 * ((threadIdx.x / 2) % 2));
-	int dy = 2 - threadIdx.x / 4 * (1 - 2 *(threadIdx.x % 2));
+	int dy = (2 - threadIdx.x / 4) * (1 - 2 *(threadIdx.x % 2));
 
 	int x = node[blockIdx.x].cur.x + dx;
 	int y = node[blockIdx.x].cur.y + dy;
@@ -264,17 +266,19 @@ AS_NodePointer * AS_search(AS_Config * config){
 		cudaMemset(d_fillResult, 0, sizeof(bool) * NUM_BLOCKS * NUM_CHOICES);
 
 		AS_search_gpu <<<NUM_BLOCKS, NUM_CHOICES>>> (d_nodeBatch, nodeBatchSize, d_fillResult, dimension);
-		cudaDeviceSynchronize();
+		//cudaDeviceSynchronize();
 
 		cudaMemcpy(fillResult, d_fillResult, sizeof(bool) * NUM_BLOCKS * NUM_CHOICES, cudaMemcpyDeviceToHost);
 
 		for (int i =0; i < nodeBatchSize; i++) {
-			for (int j = 0; j < 8; j++) {
+			for (int j = 0; j < NUM_CHOICES; j++) {
+				//printf("%d: %d\n", j, fillResult[i * NUM_CHOICES + j]);
 				if (fillResult[i * NUM_CHOICES + j]) {
 					int dx = (1 + j  / 4) * (1 - 2 * ((j / 2) % 2));
-					int dy = 2 - j / 4 * (1 - 2 *(j % 2));
+					int dy = (2 - j / 4) * (1 - 2 *(j % 2));
 					int x = nodes[i]->cur.x;
 					int y = nodes[i]->cur.y;
+					//printf("  (%d, %d)\n", dx, dy);
 					AS_Node * created = createNode(x + dx, y + dy);
 					created->parent = nodes[i];
 					created->prev.x = x;

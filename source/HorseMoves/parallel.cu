@@ -7,7 +7,7 @@
 #include <string.h>
 #include <time.h>
 #include <sys/time.h>
-#include "../parallel/AStarSerial.h"
+#include "../parallel/AStarCUDA.h"
 
 bool areSameState(void * stateA, void * stateB){
 	State * a = (State *) stateA;

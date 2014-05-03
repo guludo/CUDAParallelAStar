@@ -11,8 +11,8 @@ r:
 	make -C ../parallel
 	make
 
-parallel: parallel.o ../parallel/AStarSerial.o
-	$(NVCC) -o $@ $< ../parallel/AStarSerial.o
+parallel: parallel.o ../parallel/AStarCUDA.o
+	$(NVCC) -o $@ $< ../parallel/AStarCUDA.o
 
 parallel.o: parallel.cu
 	$(NVCC) -c $<
