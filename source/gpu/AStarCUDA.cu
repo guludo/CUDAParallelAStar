@@ -18,7 +18,7 @@
 #define AS_V_VALID		1 /* The node is valid */
 #define AS_V_INVALID	2 /* The node is invalid */
 
-
+#define AS_STATE_AT(base, index) (((char*)base) + index*config->stateSize)
 
 using namespace std;
 
@@ -135,13 +135,17 @@ void ClosedSet_add(ClosedSet * closedSet, AS_NodePointer node){
 }
 
 bool ClosedSet_hasNode(ClosedSet * closedSet, AS_NodePointer node){
+	return ClosedSet_hasState(closedSet, node->state);
+}
+
+bool ClosedSet_hasState(ClosedSet * closedSet, void * state){
 	ClosedSetList * list = closedSet->list;
 	int chunkSize = closedSet->chunkSize;
 	int length = closedSet->length;
 	int count = 0;
 	while(list){
 		for(int i = 0; i<chunkSize && count<length; i++, count++){
-			if(closedSet->areSameStates(node->state, list->nodes[i]->state)){
+			if(closedSet->areSameStates(state, list->nodes[i]->state)){
 				return true;
 			}
 		}
@@ -156,21 +160,23 @@ void AS_initConfig(AS_Config * config){
 	config->queueIncreaseCapacity = AS_QUEUE_INCREASE_CAPACITY;
 	config->nodesPerCycle = AS_NODES_PER_CYCLE;
 	config->maxNodesPerExpansion = AS_MAX_NODES_PER_EXPANSION;
+	config->dataSize = sizeof(int);
+	config->dataSize = 0;
 }
 
-void AS_freeTree(AS_Node * root){
+void AS_freeTree(AS_Node * root, AS_Config * config){
 	if(root){
 		for(int i = 0; i<root->childrenLength; i++){
-			AS_freeTree(root->children[i]);
+			AS_freeTree(root->children[i], config);
 		}
 		root->childrenLength = 0;
 		if(root->status == AS_STATUS_IDLE){ //If it is not in the path
-			ASNode_free(root);
+			ASNode_free(root, config);
 		}
 	}
 }
 
-AS_NodePointer * AS_searchResult(AS_Node * node){
+AS_NodePointer * AS_searchResult(AS_Node * node, AS_Config * config){
 	/* Count the number of nodes */
 	AS_Node * n = node;
 	int count = 0;
@@ -195,16 +201,24 @@ AS_NodePointer * AS_searchResult(AS_Node * node){
 		}
 	}
 	
-	AS_freeTree(n);
+	AS_freeTree(n, config);
 	
 	return path;
 }
 
-__global__ void AS_nodeCycle(ExpandNodeFunction expandNode, AS_Node * node, AS_Node * expansionNodes, int * expansionLength){
-	node = node + blockIdx.x;
-	expansionNodes = expansionNodes + blockIdx.x*blockDim.x;
-	expansionLength = expansionLength + blockIdx.x;
-	expandNode(node, expansionNodes, expansionLength);
+__global__ void AS_nodeCycle(ExpandStateFunction expandState, int stateSize, void * statesToExpand_d, void * expansionStates_d, NodeData * expansionNodesData_d, int * expansionSizes_d){
+	void * state = ((char *)statesToExpand_d) + blockIdx.x*stateSize;
+	void * expansionStates = ((char*)expansionStates_d) + blockIdx.x*blockDim.x*stateSize;
+	int * expansionLength = expansionSizes_d + blockIdx.x;
+	NodeData * nodesData = expansionNodesData_d + blockIdx.x*blockDim.x;
+	expandState(state, expansionStates, nodesData, expansionLength);
+}
+
+void statesToNodes(void * states, AS_Node * nodes, int count, size_t stateSize){
+	for(int i = 0; i<count; i++){
+		nodes[i].state = states;
+		states = ((char *)states) + stateSize;
+	}
 }
 
 AS_NodePointer * AS_search(AS_Config * config){
@@ -212,23 +226,30 @@ AS_NodePointer * AS_search(AS_Config * config){
 	
 	/* Allocate space for expansion */
 	int expansionNodesLength = config->nodesPerCycle * (config->maxNodesPerExpansion);
-	int sizeofExpansionNodes = sizeof(AS_Node) * expansionNodesLength;
 	
-	AS_Node * expansionNodes;
-	cudaMalloc((void **) &expansionNodes, sizeofExpansionNodes);
+	/* Vector with all the states to be used by the device on expansion */
+	void * expansionStates_d;
+	cudaMalloc((void **) &expansionStates_d, expansionNodesLength * config->stateSize);
+	/* Vector with all the node data structs to be used by the device on expansion */
+	NodeData * expansionNodesData_d;
+	cudaMalloc((void **) &expansionNodesData_d, expansionNodesLength * sizeof(NodeData));
+	/* Vector with size of each expansion */
+	int * expansionSizes_d;
+	cudaMalloc((void **) &expansionSizes_d, sizeof(int) * config->nodesPerCycle);
+	/* States to be expanded to be used by the device */
+	void * statesToExpand_d;
+	cudaMalloc((void **) &statesToExpand_d, config->stateSize * config->nodesPerCycle);
 
-	int * expansionSizes;
-	cudaMalloc((void **) &expansionSizes, sizeof(int) * config->nodesPerCycle);
-
-	AS_Node * deviceNodesToExpand;
-	cudaMalloc((void **) &deviceNodesToExpand, sizeof(AS_Node) * config->nodesPerCycle);
-
-	AS_Node * hostExpansionNodes = (AS_Node *) malloc(sizeofExpansionNodes);
-	int * hostExpansionSizes = (int *) malloc(sizeof(int) * config->nodesPerCycle);
+	/* The host version of the variables above */
+	void * expansionStates_h =  malloc(expansionNodesLength * config->stateSize);
+	NodeData * expansionNodesData_h = (NodeData *) malloc(sizeof(NodeData) * expansionNodesLength);
+	int * expansionSizes_h = (int *) malloc(sizeof(int) * config->nodesPerCycle);
+	void * statesToExpand_h = malloc(config->stateSize * config->nodesPerCycle);
+	
+	/* Used to solve conflicts due to the parallel expansion of nodes */
 	char * expansionValidity = (char *) malloc(sizeof(char) * expansionNodesLength);
+
 	AS_NodePointer * nodesToExpand = (AS_NodePointer *) malloc(sizeof(AS_NodePointer) * config->nodesPerCycle);
-	
-	//TODO: Continue down here
 
 	ClosedSet * closedSet = newClosedSet(config->areSameStates, config->closedSetChunkSize);
 	Queue * queue = newQueue(config->queueInitialCapacity, config->queueIncreaseCapacity);
@@ -239,37 +260,40 @@ AS_NodePointer * AS_search(AS_Config * config){
 	while(true){
 		loopCount++;
 		if(Queue_isEmpty(queue)){
-			AS_freeTree(config->startNode);
+			AS_freeTree(config->startNode, config);
 			break;
 		}
-		
-		nodesToExpand[0] = Queue_remove(queue);
+		AS_Node * node = Queue_remove(queue);
+		nodesToExpand[0] = node;
 
-		cudaMemcpy(deviceNodesToExpand, nodesToExpand[0], sizeof(AS_Node),  cudaMemcpyDeviceToDevice);
+		cudaMemcpy(statesToExpand_d, &node->state, config->stateSize, cudaMemcpyHostToDevice);
 
-		ClosedSet_add(closedSet, nodesToExpand[0]);
+		ClosedSet_add(closedSet, node);
 		
 		/* If first element is the goal state */
-		if(config->isGoalState(nodesToExpand[0]->state)){
-			path = AS_searchResult(nodesToExpand[0]);
+		if(config->isGoalState(node->state)){
+			path = AS_searchResult(node, config);
 			break;
 		}
 		
 		int nodeCount = 1;
 		while(nodeCount < config->nodesPerCycle && !Queue_isEmpty(queue)){
-			nodesToExpand[nodeCount] = Queue_remove(queue);
-
-			cudaMemcpy(deviceNodesToExpand + nodeCount, nodesToExpand[nodeCount], sizeof(AS_Node),  cudaMemcpyDeviceToDevice);
+			node = Queue_remove(queue);
+			nodesToExpand[nodeCount] = node;
+			cudaMemcpy(AS_STATE_AT(statesToExpand_d, nodeCount), &node->state, config->stateSize,  cudaMemcpyHostToDevice);
 			
-			ClosedSet_add(closedSet, nodesToExpand[nodeCount]);
+			ClosedSet_add(closedSet, node);
 			nodeCount++;
 		}
+
+
 		
 		/* PARALLELISM */
-		AS_nodeCycle<<< nodeCount, config->maxNodesPerExpansion >>>(config->expandNode, deviceNodesToExpand, expansionNodes, expansionSizes);
-		/* Copy expansionNodes to host */
-		cudaMemcpy(hostExpansionNodes, expansionNodes, sizeof(AS_Node)*nodeCount*config->maxNodesPerExpansion, cudaMemcpyDeviceToHost);
-		cudaMemcpy(hostExpansionSizes, expansionSizes, sizeof(int)*nodeCount, cudaMemcpyDeviceToHost);
+		AS_nodeCycle<<< nodeCount, config->maxNodesPerExpansion >>>(config->expandState, config->stateSize, statesToExpand_d, expansionStates_d, expansionNodesData_d, expansionSizes_d);
+		/* Copy data to host */
+		cudaMemcpy(expansionStates_h, expansionStates_d, config->stateSize * expansionNodesLength, cudaMemcpyDeviceToHost);
+		cudaMemcpy(expansionNodesData_h, expansionNodesData_d, sizeof(NodeData) * expansionNodesLength, cudaMemcpyDeviceToHost);
+		cudaMemcpy(expansionSizes_h, expansionSizes_d, sizeof(int)*nodeCount, cudaMemcpyDeviceToHost);
 		
 		
 		/* 
@@ -280,18 +304,18 @@ AS_NodePointer * AS_search(AS_Config * config){
 		memset(expansionValidity, AS_V_IDLE, expansionNodesLength);
 		/* li - localIndex, bi - blockIndex */
 		for(int i = 0, bi=0, li=0; i<expansionNodesLength; ){
-			if(li < hostExpansionSizes[bi] && expansionValidity[i] == AS_V_IDLE){
+			if(li < expansionSizes_h[bi] && expansionValidity[i] == AS_V_IDLE){
 				expansionValidity[i] = AS_V_VALID;
 				int validIndex = i;
-				double validCost = hostExpansionNodes[i].cost + hostExpansionNodes[i].heuristic;
+				double validCost = expansionNodesData_h[i].cost + expansionNodesData_h[i].heuristic;
 				/* lj - localIndex, bj - blockIndex */
 				for(int bj = bi+1, lj = 0, j = bj*config->maxNodesPerExpansion; j<expansionNodesLength; ){
 					bool goToNextBlock = false;
-					if(lj < hostExpansionSizes[bj] && expansionValidity[j] == AS_V_IDLE){
-						void * stateA = hostExpansionNodes[validIndex].state;
-						void * stateB = hostExpansionNodes[j].state;
+					if(lj < expansionSizes_h[bj] && expansionValidity[j] == AS_V_IDLE){
+						void * stateA = AS_STATE_AT(expansionStates_h, validIndex);
+						void * stateB = AS_STATE_AT(expansionStates_h, j);
 						if(config->areSameStates(stateA, stateB)){
-							double costB = hostExpansionNodes[j].cost + hostExpansionNodes[j].heuristic;
+							double costB = expansionNodesData_h[j].cost + expansionNodesData_h[j].heuristic;
 							if(costB < validCost){
 								expansionValidity[j] = AS_V_VALID;
 								expansionValidity[validIndex] = AS_V_INVALID;
@@ -304,7 +328,7 @@ AS_NodePointer * AS_search(AS_Config * config){
 						}
 					
 					}
-					if(lj + 1 < hostExpansionSizes[bj] && !goToNextBlock){
+					if(lj + 1 < expansionSizes_h[bj] && !goToNextBlock){
 						j++;
 						lj++;
 					}else if(bj + 1 < nodeCount){
@@ -316,7 +340,7 @@ AS_NodePointer * AS_search(AS_Config * config){
 					}
 				}
 			}
-			if(li + 1 < hostExpansionSizes[bi]){
+			if(li + 1 < expansionSizes_h[bi]){
 				i++;
 				li++;
 			}else if(bi + 1 < nodeCount){
@@ -328,21 +352,22 @@ AS_NodePointer * AS_search(AS_Config * config){
 			}
 		}
 		
-		/* TODO: Add the valid expansion nodes to their parents */
+		/*Creating the nodes and adding the children */
 		for(int i = 0; i<nodeCount; i++){
-			AS_Node * children = hostExpansionNodes + config->maxNodesPerExpansion*i;
-			int size = hostExpansionSizes[i];
+			void * childStates = AS_STATE_AT(expansionStates_h, config->maxNodesPerExpansion*i);
+			int size = expansionSizes_h[i];
 			char * validity = expansionValidity + config->maxNodesPerExpansion*i;
+			NodeData * nodeData = expansionNodesData_h + config->maxNodesPerExpansion*i;
 			int j = 0;
 			AS_Node * node = nodesToExpand[i];
 			node->children = (AS_NodePointer *) malloc(sizeof(AS_NodePointer) * config->maxNodesPerExpansion);
 			int c = 0; /* Counter for actual children */
 			while(j<size){
-				if(validity[j] && !ClosedSet_hasNode(closedSet, children + j)){
-					/* Create a node and copy the child */
-					children[j].parent = node;
-					AS_Node * child = (AS_Node *) malloc(sizeof(AS_Node));
-					memcpy(child, children + j, sizeof(AS_Node));
+				if(validity[j] && !ClosedSet_hasState(closedSet, AS_STATE_AT(childStates, j))){
+					/* Create the child node */
+					void * s = malloc(config->stateSize);
+					memcpy(s, AS_STATE_AT(childStates, j), config->stateSize);
+					AS_Node * child = newASNode(s, nodeData[j].heuristic, nodeData[j].cost, node);
 					node->children[c] = child;
 					c++;
 					Queue_insert(queue, child);
@@ -359,35 +384,37 @@ AS_NodePointer * AS_search(AS_Config * config){
 	Queue_free(queue);
 	ClosedSet_free(closedSet);
 	
-	cudaFree(deviceNodesToExpand);
-	cudaFree(expansionNodes);
-	cudaFree(expansionSizes);
-	free(hostExpansionNodes);
-	free(hostExpansionSizes);
+	cudaFree(expansionStates_d);
+	cudaFree(expansionNodesData_d);
+	cudaFree(expansionSizes_d);
+	cudaFree(statesToExpand_d);
+
+	free(expansionStates_h);
+	free(expansionNodesData_h);
+	free(expansionSizes_h);
+	free(statesToExpand_h);
 	free(expansionValidity);
 	free(nodesToExpand);
-	
 	
 	return path;
 }
 
-int deb = 0;
-void AS_freePath(AS_NodePointer * path){
+void AS_freePath(AS_NodePointer * path, AS_Config * config){
 	for(int i = 0; path[i]; i++){
-		ASNode_free(path[i]);
+		ASNode_free(path[i], config);
 	}
 	delete [] path;
 }
 
-AS_Node * newASNode(double heuristic, double cost, AS_Node * parent){
+AS_Node * newASNode(void * state, double heuristic, double cost, AS_Node * parent){
 	AS_Node * node = (AS_Node *) malloc(sizeof(AS_Node));
-	ASNode_init(node, heuristic, cost, parent);
+	ASNode_init(node, state, heuristic, cost, parent);
 	return node;
 }
 
-void ASNode_init(AS_Node * node, double heuristic, double cost, AS_Node * parent){
+__host__ __device__ void ASNode_init(AS_Node * node, void * state, double heuristic, double cost, AS_Node * parent){
 	node->data = NULL;
-	node->state = NULL;
+	node->state = state;
 	node->parent = parent;
 	node->heuristic = heuristic;
 	node->cost = cost;
@@ -396,7 +423,7 @@ void ASNode_init(AS_Node * node, double heuristic, double cost, AS_Node * parent
 	node->children = NULL;
 }
 
-void ASNode_free(AS_Node * node){
+void ASNode_free(AS_Node * node, AS_Config * config){
 	if(node->state){
 		free(node->state);
 		node->state = NULL;
@@ -414,15 +441,15 @@ void testQueue(){
 	
 	printf("Testing with only one element:\n");
 	printf("\tInserting...\n");
-	Queue_insert(q, newASNode(1));
+	Queue_insert(q, newASNode(NULL, 1));
 	printf("\tRemoving...\n");
 	AS_Node * n = Queue_remove(q);
 	printf("\tHeuristic: %f\n\n", n->heuristic);
 	delete n;
 	
 	printf("Testing with 2 elements:\n");
-	Queue_insert(q, newASNode(2));
-	Queue_insert(q, newASNode(1));
+	Queue_insert(q, newASNode(NULL, 2));
+	Queue_insert(q, newASNode(NULL, 1));
 	printf("\tExpected output: 1 2\n\tRemoving elements and printing values:\n");
 	n = Queue_remove(q);
 	printf("\t%f ", n->heuristic);
@@ -435,7 +462,7 @@ void testQueue(){
 	for(int i = 0; i<5; i++){
 		int h = rand() % 100;
 		printf(" %d", h);
-		Queue_insert(q, newASNode(h));
+		Queue_insert(q, newASNode(NULL, h));
 	}
 	printf("\n\tOutput:");
 	for(int i = 0; i<5; i++){

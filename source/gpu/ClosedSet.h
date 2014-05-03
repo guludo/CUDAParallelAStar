@@ -34,3 +34,5 @@ void ClosedSet_add(ClosedSet * closedSet, AS_NodePointer node);
  * Makes a linear search on the closed set to verify if it has a node pointer.
  */
 bool ClosedSet_hasNode(ClosedSet * closedSet, AS_NodePointer node);
+
+bool ClosedSet_hasState(ClosedSet * closedSet, void * state);
