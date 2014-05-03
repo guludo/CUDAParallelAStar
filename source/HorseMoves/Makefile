@@ -2,7 +2,7 @@
 CC = g++ -O3 -g
 NVCC = nvcc -O3 -g -arch sm_20
 
-TARGETS=r serial parallel
+TARGETS=serial parallel
 
 all: $(TARGETS)
 
