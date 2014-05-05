@@ -7,7 +7,7 @@
 
 #define NUM_BLOCKS 16
 #define NUM_CHOICES 8
-#define DUPLICATE 0
+#define DUPLICATE 1
 
 Queue * queue;
 
@@ -131,7 +131,7 @@ AS_NodePointer * AS_searchResult(AS_Node * node){
 	return path;
 }
 
-__device__ void expandNode_gpu(AS_Node * node, int size, bool * fillResult, int dim) {
+__device__ void expandNode_gpu(AS_Node * node, int size, char * fillResult, int dim) {
 	int dx = (1 + threadIdx.x / 4) * (1 - 2 * ((threadIdx.x / 2) % 2));
 	int dy = (2 - threadIdx.x / 4) * (1 - 2 *(threadIdx.x % 2));
 
@@ -139,18 +139,49 @@ __device__ void expandNode_gpu(AS_Node * node, int size, bool * fillResult, int 
 	int y = node[blockIdx.x].cur.y + dy;
 	if (x < 0 || x >= dim || y < 0 || y >= dim || (x == node[blockIdx.x].prev.x && y == node[blockIdx.x].prev.y))
 		return;
-	for (int i = 0; i < size; i++) {
-		if (x == node[i].cur.x && y == node[i].cur.y) {
-			return;
-		}
-	}
-	fillResult[blockIdx.x * blockDim.x + threadIdx.x] = true;
+	fillResult[blockIdx.x * blockDim.x + threadIdx.x] = 1;
 }
 
-__global__ void AS_search_gpu (AS_Node * nodes, int size, bool * fillResult, int dim) {
+__global__ void AS_search_gpu (AS_Node * nodes, int size, char * fillResult, int dim) {
 	if (blockIdx.x >= size)
 		return;
 	expandNode_gpu(nodes, size, fillResult, dim);
+}
+
+__global__ void AS_remove_duplicate_gpu (AS_Node * nodes, int size, char * fillResult) {
+	if (threadIdx.y == NUM_CHOICES) {
+		int dx1 = (1 + blockIdx.y / 4) * (1 - 2 * ((blockIdx.y / 2) % 2));
+		int x1 = nodes[blockIdx.x].cur.x + dx1;
+		int x2 = nodes[threadIdx.x].cur.x;
+		if (x1 != x2)
+			return;
+		int dy1 = (2 - blockIdx.y / 4) * (1 - 2 *(blockIdx.y % 2));
+		int y1 = nodes[blockIdx.x].cur.y + dy1;
+		int y2 = nodes[threadIdx.x].cur.y;
+		if (y1 != y2)
+			return;
+		fillResult[blockIdx.x * NUM_CHOICES + blockIdx.y] = 0;
+		return;
+	}
+
+	if (blockIdx.x >= threadIdx.x)
+		return;
+
+	if (fillResult[blockIdx.x * NUM_CHOICES + blockIdx.y] && fillResult[threadIdx.x * NUM_CHOICES + threadIdx.y] == 1) {
+		int dx1 = (1 + blockIdx.y / 4) * (1 - 2 * ((blockIdx.y / 2) % 2));
+		int dx2 = (1 + threadIdx.y / 4) * (1 - 2 * ((threadIdx.y / 2) % 2));
+		int x1 = nodes[blockIdx.x].cur.x + dx1;
+		int x2 = nodes[threadIdx.x].cur.x + dx2;
+		if (x1 != x2)
+			return;
+		int dy1 = (2 - blockIdx.y / 4) * (1 - 2 *(blockIdx.y % 2));
+		int dy2 = (2 - threadIdx.y / 4) * (1 - 2 *(threadIdx.y % 2));
+		int y1 = nodes[blockIdx.x].cur.y + dy1;
+		int y2 = nodes[threadIdx.x].cur.y + dy2;
+		if (y1 != y2)
+			return;
+		fillResult[threadIdx.x * NUM_CHOICES + threadIdx.y] = -1;
+	}
 }
 
 AS_NodePointer * AS_search(AS_Config * config){
@@ -170,14 +201,18 @@ AS_NodePointer * AS_search(AS_Config * config){
 	// one batch of nodes retrieved from the heap
 	AS_Node * nodeBatch = (AS_Node *) malloc (sizeof(AS_Node) * NUM_BLOCKS);
 	// fill results of newly created nodes
-	bool * fillResult = (bool *) malloc (sizeof(bool) * NUM_BLOCKS * NUM_CHOICES);
+	char * fillResult = (char *) malloc (sizeof(char) * NUM_BLOCKS * NUM_CHOICES);
 		
 	// one batch of nodes and fill results in device
 	AS_Node * d_nodeBatch;
-	bool * d_fillResult;
+	char * d_fillResult;
+
+	dim3 grid_block2D (NUM_BLOCKS, NUM_CHOICES);
+
+	dim3 grid_thread2D (NUM_BLOCKS, NUM_CHOICES + 1);
 
 	cudaMalloc((void **)&d_nodeBatch, sizeof(AS_Node) * NUM_BLOCKS);
-	cudaMalloc((void **)&d_fillResult, sizeof(bool) * NUM_BLOCKS * NUM_CHOICES);
+	cudaMalloc((void **)&d_fillResult, sizeof(char) * NUM_BLOCKS * NUM_CHOICES);
 
 	while (true) {
 		// no path found
@@ -242,17 +277,20 @@ AS_NodePointer * AS_search(AS_Config * config){
 			break;
 
 		cudaMemcpy(d_nodeBatch, nodeBatch, sizeof(AS_Node) * nodeBatchSize, cudaMemcpyHostToDevice);
-		cudaMemset(d_fillResult, 0, sizeof(bool) * NUM_BLOCKS * NUM_CHOICES);
+		cudaMemset(d_fillResult, 0, sizeof(char) * NUM_BLOCKS * NUM_CHOICES);
 
+		// perform A* search
 		AS_search_gpu <<<NUM_BLOCKS, NUM_CHOICES>>> (d_nodeBatch, nodeBatchSize, d_fillResult, dimension);
-		//cudaDeviceSynchronize();
 
-		cudaMemcpy(fillResult, d_fillResult, sizeof(bool) * NUM_BLOCKS * NUM_CHOICES, cudaMemcpyDeviceToHost);
+		// remove duplicates
+		AS_remove_duplicate_gpu<<<grid_block2D, grid_thread2D>>> (d_nodeBatch, nodeBatchSize, d_fillResult);
+
+		cudaMemcpy(fillResult, d_fillResult, sizeof(char) * NUM_BLOCKS * NUM_CHOICES, cudaMemcpyDeviceToHost);
 
 		for (int i =0; i < nodeBatchSize; i++) {
 			for (int j = 0; j < NUM_CHOICES; j++) {
 				//printf("%d: %d\n", j, fillResult[i * NUM_CHOICES + j]);
-				if (fillResult[i * NUM_CHOICES + j]) {
+				if (fillResult[i * NUM_CHOICES + j] == 1) {
 					int dx = (1 + j  / 4) * (1 - 2 * ((j / 2) % 2));
 					int dy = (2 - j / 4) * (1 - 2 *(j % 2));
 					int x = nodes[i]->cur.x;
