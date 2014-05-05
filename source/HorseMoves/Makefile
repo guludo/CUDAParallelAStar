@@ -32,10 +32,10 @@ pre-parallel.o: pre-parallel.cpp
 	$(CC) -c $<
 
 gpu.o: gpu.cu
-	$(MPCC) -c gpu.cu
+	$(NVCC) -c gpu.cu
 
 gpu: gpu.o ../gpu/AStarCUDA.o
-	$(MPCC) -o $@ gpu.o ../gpu/AStarCUDA.o
+	$(NVCC) -o $@ gpu.o ../gpu/AStarCUDA.o
 
 clean:
 	rm -f *.o $(TARGETS) *.exe.* ../parallel/*.o
