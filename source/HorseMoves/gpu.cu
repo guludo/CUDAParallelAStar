@@ -5,9 +5,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include <time.h>
-#include <sys/time.h>
-#include "../serial/AStarSerial.h"
+#include "../gpu/AStarCUDA.h"
 
 typedef struct{
 	int x;
@@ -16,6 +14,8 @@ typedef struct{
 
 int dimension;
 State goal;
+__constant__ State deviceGoal;
+__constant__ int deviceDimension;
 State * start;
 
 bool areSameState(void * stateA, void * stateB){
@@ -28,7 +28,7 @@ bool isGoalState(void * state){
 	return areSameState(state, &goal);
 }
 
-double getHeuristic(State * state){
+double getHeuristic_h(State * state){
 	int dx = abs(goal.x - state->x);
 	int dy = abs(goal.y - state->y);
 	double h = (dx + dy)/3.0;
@@ -41,76 +41,99 @@ double getHeuristic(State * state){
 	return h;
 }
 
-AS_Node * createNode(int x, int y){
-	State * state = (State *) malloc(sizeof(State));
-	state->x = x;
-	state->y = y;
-	AS_Node * node = newASNode(getHeuristic(state));
-	node->state = state;
-	return node;
+__device__ double getHeuristic(State * state){
+	int dx = abs(deviceGoal.x - state->x);
+	int dy = abs(deviceGoal.y - state->y);
+	double h = (dx + dy)/3.0;
+	if((dx % 2 == 0) && ((dx/2)%2 == 0)){
+		h *= 0.9;
+	}
+	if((dy % 2 == 0) && ((dy/2)%2 == 0)){
+		h *= 0.9;
+	}
+	return h;
 }
 
-AS_NodePointer * expandNode(AS_Node * node){
-	State * state = (State *) node->state;
+__device__ void setState(int index, State * children, NodeData * nodesData, int x, int y){
+	children[index].x = x;
+	children[index].y = y;
+	nodesData[index].cost = 1;
+	nodesData[index].heuristic = getHeuristic(children + index);
+}
+
+__device__ void expandState(void * stateP, void * expansionStates, NodeData * nodesData, int * expansionLength){
+	
+	if(threadIdx.x != 0) return; //Temporary
+
+	State * state = (State *) stateP;
+	State * children = (State *) expansionStates;
 	int x = state->x;
 	int y = state->y;
-	int d = dimension;
+	int d = deviceDimension;
 	
-	AS_NodePointer * nodeList = (AS_NodePointer *) malloc(sizeof(AS_NodePointer)*9);
 	int count = 0;
 	
 	if(x -2 >= 0) {
 		if(y - 2 >= 0){
-			nodeList[count++] = createNode(x-2, y-1);
-			nodeList[count++] = createNode(x-1, y-2);
+			setState(count, children, nodesData, x-2, y-1);
+			count++;
+			setState(count, children, nodesData, x-1, y-2);
+			count++;
 		}else if(y - 1 >= 0){
-			nodeList[count++] = createNode(x-2, y-1);				
+			setState(count, children, nodesData, x-2, y-1);
+			count++;
 		}
 		if(y + 2 < d){
-			nodeList[count++] = createNode(x-2, y+1);
-			nodeList[count++] = createNode(x-1, y+2);
+			setState(count, children, nodesData, x-1, y+2);
+			count++;
+			setState(count, children, nodesData, x-2, y+1);
+			count++;
 		}else if(y + 1 < d){
-			nodeList[count++] = createNode(x-2, y+1);
+			setState(count, children, nodesData, x-2, y+1);
+			count++;
 		}
 	}else if(x -1 >= 0){
 		if(y - 2 >= 0){
-			nodeList[count++] = createNode(x-1, y-2);
+			setState(count, children, nodesData, x-1, y-2);
+			count++;
 		}
 		if(y + 2 < d){
-			nodeList[count++] = createNode(x-1, y+2);
+			setState(count, children, nodesData, x-1, y+2);
+			count++;
 		}
 	}
 	
 	if(x + 2 < d){
 		if(y - 2 >= 0){
-			nodeList[count++] = createNode(x+2, y-1);
-			nodeList[count++] = createNode(x+1, y-2);
+			setState(count, children, nodesData, x+2, y-1);
+			count++;
+			setState(count, children, nodesData, x+1, y-2);
+			count++;
 		}else if(y - 1 >= 0){
-			nodeList[count++] = createNode(x+2, y-1);				
+			setState(count, children, nodesData, x+2, y-1);
+			count++;
 		}
 		if(y + 2 < d){
-			nodeList[count++] = createNode(x+2, y+1);
-			nodeList[count++] = createNode(x+1, y+2);
+			setState(count, children, nodesData, x+2, y+1);
+			count++;
+			setState(count, children, nodesData, x+1, y+2);
+			count++;
 		}else if(y + 1 < d){
-			nodeList[count++] = createNode(x+2, y+1);
+			setState(count, children, nodesData, x+2, y+1);
+			count++;
 		}
 	}else if(x + 1 < d){
 		if(y - 2 >= 0){
-			nodeList[count++] = createNode(x+1, y-2);
+			setState(count, children, nodesData, x+1, y-2);
+			count++;
 		}
 		if(y + 2 < d){
-			nodeList[count++] = createNode(x+1, y+2);
+			setState(count, children, nodesData, x+1, y+2);
+			count++;
 		}
 	}
 	
-	if(count < 8){
-		nodeList = (AS_NodePointer *) realloc(nodeList, sizeof(AS_NodePointer)*(count+1));
-	}
-	nodeList[count] = NULL;
-
-	return nodeList;
-	
-	
+	*expansionLength = count;	
 }
 
 //
@@ -140,19 +163,7 @@ char *read_string( int argc, char **argv, const char *option, char *default_valu
 	return default_value;
 }
 
-double read_timer( )
-{
-    static bool initialized = false;
-    static struct timeval start;
-    struct timeval end;
-    if( !initialized )
-    {
-        gettimeofday( &start, NULL );
-        initialized = true;
-    }
-    gettimeofday( &end, NULL );
-    return (end.tv_sec - start.tv_sec) + 1.0e-6 * (end.tv_usec - start.tv_usec);
-}
+
 
 int main(int argc, char **argv){
 	dimension = read_int(argc, argv, "-d", 12);
@@ -162,21 +173,24 @@ int main(int argc, char **argv){
 	
 	goal.x = dimension-1;
 	goal.y = dimension-1;
+
+	cudaMemcpyToSymbol("deviceGoal", &goal, sizeof(State), 0, cudaMemcpyHostToDevice);
+	cudaMemcpyToSymbol("deviceDimension", &dimension, sizeof(int), 0, cudaMemcpyHostToDevice);
 	
 	AS_Config config;
 	AS_initConfig(&config);
 	config.areSameStates = &areSameState;
 	config.isGoalState = &isGoalState;
-	config.expandNode = &expandNode;
+	config.expandState = &expandState;
 	config.queueInitialCapacity = 20000;
 	config.closedSetChunkSize = 20000;
+	config.stateSize = sizeof(State);
 	
-	AS_Node * startNode = newASNode(getHeuristic(start));
-	startNode->state = start;
+	AS_Node * startNode = newASNode(start, getHeuristic_h(start));
 	config.startNode = startNode;
-	double simulation_time = read_timer( );
+	
 	AS_NodePointer * path = AS_search(&config);
-	simulation_time = read_timer( ) - simulation_time;
+	
 	if(path){
 		State * s = (State *) path[0]->state;
 		printf("Horse moves to go from position (%d,%d) to position (%d, %d):\n(%d, %d)", start->x, start->y, goal.x, goal.y, s->x, s->y);
@@ -184,15 +198,9 @@ int main(int argc, char **argv){
 			s = (State *) path[i]->state;
 			printf(",(%d,%d)", s->x, s->y);
 		}
-		//AS_freePath(path);
+		AS_freePath(path, &config);
 	}else{
 		printf("Path not found from (%d,%d) to position (%d, %d):\n", start->x, start->y, goal.x, goal.y);
 	}
-	printf( "simulation time = %g seconds", simulation_time);
-
-	// cleaning the memory
-	cleanPath(path);
-	cleanMem();
 	return 0;
 }
-

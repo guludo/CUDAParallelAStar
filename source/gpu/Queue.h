@@ -25,4 +25,3 @@ AS_NodePointer Queue_remove(Queue * queue);
  * Frees the queue.
  */
 void Queue_free(Queue * queue);
-
