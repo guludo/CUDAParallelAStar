@@ -9,7 +9,12 @@
 #include <sys/time.h>
 #include "../serial/AStarSerial.h"
 
+//#define PATH_PRINT
+
 typedef int State;
+typedef enum {MANHATTAN, HAMMING} Distance_t;
+Distance_t heuristic;
+
 
 int dimension;
 
@@ -39,11 +44,22 @@ double getHeuristic(void * state){
 	State * s = (State *) state;
 	int l = dimension * dimension;
 	double h = 0;
-	int i;
-	for(i = 0; i<l-1; i++){
-		if(s[i] != i+1) h++;
+	if (heuristic == HAMMING) {
+		for(int i = 0; i<l-1; i++){
+			if(s[i] != 0 && s[i] != i+1) 
+				h++;
+		}
 	}
-	if(s[i] == 0) h++;
+	else if (heuristic == MANHATTAN) {
+		for(int i = 0; i<dimension; i++) {
+			for (int j = 0; j<dimension; j++) {
+				int order = i * dimension + j;
+				if(s[order] != 0) 
+					h += abs(i - (s[order]-1)/dimension) + abs(j - (s[order]-1)%dimension);
+			}
+		}
+	}
+
 	return h;
 }
 
@@ -174,6 +190,15 @@ double read_timer( )
 int main(int argc, char **argv){
 	dimension = read_int(argc, argv, "-d", 3);
 	unsigned int seed = read_int(argc, argv, "-r", time(NULL) );
+	const char * heuristicFunction = read_string(argc, argv, "-h", (char *)"manhattan");
+	if (!strcmp (heuristicFunction, "hamming")) {
+		heuristic = HAMMING;
+		printf("Hamming heuristic\n");
+	}
+	else if (!strcmp (heuristicFunction, "manhattan")) {
+		heuristic = MANHATTAN;
+		printf("Manhattan heuristic\n");
+	}
 	srand (seed);
 	
 	start = (State *) malloc(sizeof(State) * dimension * dimension);
@@ -211,7 +236,9 @@ int main(int argc, char **argv){
 	
 	if(path){
 		printf("Solution found.\n");
+#ifdef PATH_PRINT
 		printPath(path);
+#endif
 		AS_freePath(path);
 	}else{
 		printf("Solution not found\n.");
