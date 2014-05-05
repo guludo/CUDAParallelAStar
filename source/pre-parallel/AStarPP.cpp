@@ -1,19 +1,30 @@
+/**
+ * Pre-parallel implementation of A* Search
+ */
+
 #include <iostream>
 #include <stdlib.h>
 #include <stdio.h>
 #include <float.h>
-#include "AStarSerial.h"
+#include <string.h>
+#include "AStarPP.h"
 #include "ClosedSet.h"
 #include "Queue.h"
 
+/**
+ * Constants used for node validation
+ */
+#define AS_V_IDLE		0 /* Node not visited yet */
+#define AS_V_VALID		1 /* The node is valid */
+#define AS_V_INVALID	2 /* The node is invalid */
+
+
 
 using namespace std;
-Queue * queue;
-ClosedSet * closedSet;
 
 
 Queue * newQueue(int capacity, int increaseCapacity){
-	queue = new Queue;
+	Queue * queue = new Queue;
 	queue->capacity = capacity+1;
 	queue->increaseCapacity = increaseCapacity;
 	queue->list = (AS_NodePointer *) malloc(sizeof(AS_NodePointer)*(queue->capacity));
@@ -84,7 +95,7 @@ void Queue_free(Queue * queue){
 }
 
 ClosedSet * newClosedSet(bool (* areSameStates)(void * stateA, void * stateB), int chunkSize = AS_CLOSEDSET_CHUNK_SIZE){
-	closedSet = new ClosedSet;
+	ClosedSet * closedSet = new ClosedSet;
 	closedSet->list = new ClosedSetList;
 	closedSet->currentList = closedSet->list;
 	closedSet->chunkSize = chunkSize;
@@ -143,6 +154,8 @@ void AS_initConfig(AS_Config * config){
 	config->closedSetChunkSize = AS_CLOSEDSET_CHUNK_SIZE;
 	config->queueInitialCapacity = AS_QUEUE_INITIAL_CAPACITY;
 	config->queueIncreaseCapacity = AS_QUEUE_INCREASE_CAPACITY;
+	config->nodesPerCycle = AS_NODES_PER_CYCLE;
+	config->maxNodesPerExpansion = AS_MAX_NODES_PER_EXPANSION;
 }
 
 void AS_freeTree(AS_Node * root){
@@ -187,8 +200,22 @@ AS_NodePointer * AS_searchResult(AS_Node * node){
 	return path;
 }
 
+void AS_nodeCycle(AS_Config * config, AS_Node * node, AS_Node * expansionNodes, int * expansionLength){
+	config->expandNode(node, expansionNodes, expansionLength);
+}
+
 AS_NodePointer * AS_search(AS_Config * config){
 	AS_NodePointer * path = NULL;
+	
+	/* Allocate space for expansion */
+	int expansionNodesLength = config->nodesPerCycle * (config->maxNodesPerExpansion);
+	int sizeofExpansionNodes = sizeof(AS_Node) * expansionNodesLength;
+	AS_Node * expansionNodes = (AS_Node *) malloc(sizeofExpansionNodes);
+	int * expansionSizes = (int *) malloc(sizeof(int) * config->nodesPerCycle);
+	AS_Node * hostExpansionNodes = (AS_Node *) malloc(sizeofExpansionNodes);
+	int * hostExpansionSizes = (int *) malloc(sizeof(int) * config->nodesPerCycle);
+	char * expansionValidity = (char *) malloc(sizeof(char) * expansionNodesLength);
+	AS_NodePointer * nodesToExpand = (AS_NodePointer *) malloc(sizeof(AS_NodePointer) * config->nodesPerCycle);
 	
 	ClosedSet * closedSet = newClosedSet(config->areSameStates, config->closedSetChunkSize);
 	Queue * queue = newQueue(config->queueInitialCapacity, config->queueIncreaseCapacity);
@@ -197,56 +224,132 @@ AS_NodePointer * AS_search(AS_Config * config){
 	
 	int loopCount = 0;
 	while(true){
-		printf("%d: queue size\n", queue->index);
-
 		loopCount++;
-
 		if(Queue_isEmpty(queue)){
 			AS_freeTree(config->startNode);
 			break;
 		}
 		
-		AS_Node * node = Queue_remove(queue);
+		nodesToExpand[0] = Queue_remove(queue);
+		ClosedSet_add(closedSet, nodesToExpand[0]);
 		
-		if(config->isGoalState(node->state)){
-			path = AS_searchResult(node);
+		/* If first element is the goal state */
+		if(config->isGoalState(nodesToExpand[0]->state)){
+			path = AS_searchResult(nodesToExpand[0]);
 			break;
 		}
 		
-		ClosedSet_add(closedSet, node);
-		
-		AS_NodePointer * children = config->expandNode(node);
-		int childrenLength = 0;
-		int i = 0;
-		while(children[i]){
-			if(ClosedSet_hasNode(closedSet, children[i])){
-				ASNode_free(children[i]);
-				children[i] = NULL;
-			}else{
-				children[i]->parent = node;
-				Queue_insert(queue, children[i]);
-				childrenLength++;
-			}
-			i++;
+		int nodeCount = 1;
+		while(nodeCount < config->nodesPerCycle && !Queue_isEmpty(queue)){
+			nodesToExpand[nodeCount] = Queue_remove(queue);
+			ClosedSet_add(closedSet, nodesToExpand[nodeCount]);
+			nodeCount++;
 		}
-		node->childrenLength = childrenLength;
-		if(childrenLength){
-			node->children = new AS_NodePointer[childrenLength];
-			int k = 0;
-			for(int j = 0; j<i; j++){
-				if(children[j]){
-					node->children[k] = children[j];
-					k++;
+		
+		/* PSEUDO-PARALLELISM: Iterating blocks */
+		for(int blockIndex = 0; blockIndex < nodeCount; blockIndex++){
+			AS_nodeCycle(config, nodesToExpand[blockIndex], expansionNodes + config->maxNodesPerExpansion * blockIndex, expansionSizes + blockIndex);
+		}
+		/* Copy expansionNodes to host */
+		memcpy(hostExpansionNodes, expansionNodes, sizeof(AS_Node)*nodeCount*config->maxNodesPerExpansion);
+		memcpy(hostExpansionSizes, expansionSizes, sizeof(int)*nodeCount);
+		
+		
+		/* 
+		 * Mark which nodes in the expansion are valid, i.e., for repeated states,
+		 * the state with the minimal cost is set as valid, the remainder as invalid.
+		 * PS: Maybe we can make this parallel too.
+		 */
+		memset(expansionValidity, AS_V_IDLE, expansionNodesLength);
+		/* li - localIndex, bi - blockIndex */
+		for(int i = 0, bi=0, li=0; i<expansionNodesLength; ){
+			if(li < hostExpansionSizes[bi] && expansionValidity[i] == AS_V_IDLE){
+				expansionValidity[i] = AS_V_VALID;
+				int validIndex = i;
+				double validCost = hostExpansionNodes[i].cost + hostExpansionNodes[i].heuristic;
+				/* lj - localIndex, bj - blockIndex */
+				for(int bj = bi+1, lj = 0, j = bj*config->maxNodesPerExpansion; j<expansionNodesLength; ){
+					bool goToNextBlock = false;
+					if(lj < hostExpansionSizes[bj] && expansionValidity[j] == AS_V_IDLE){
+						void * stateA = hostExpansionNodes[validIndex].state;
+						void * stateB = hostExpansionNodes[j].state;
+						if(config->areSameStates(stateA, stateB)){
+							double costB = hostExpansionNodes[j].cost + hostExpansionNodes[j].heuristic;
+							if(costB < validCost){
+								expansionValidity[j] = AS_V_VALID;
+								expansionValidity[validIndex] = AS_V_INVALID;
+								validCost = costB;
+								validIndex = j;
+							}else{
+								expansionValidity[j] = AS_V_INVALID;
+							}
+							goToNextBlock = true;
+						}
+					
+					}
+					if(lj + 1 < hostExpansionSizes[bj] && !goToNextBlock){
+						j++;
+						lj++;
+					}else if(bj + 1 < nodeCount){
+						bj++;
+						j = bj * config->maxNodesPerExpansion;
+						lj = 0;
+					}else{
+						break;
+					}
 				}
 			}
+			if(li + 1 < hostExpansionSizes[bi]){
+				i++;
+				li++;
+			}else if(bi + 1 < nodeCount){
+				bi++;
+				i = bi * config->maxNodesPerExpansion;
+				li = 0;
+			}else{
+				break;
+			}
 		}
-		free(children);
+		
+		/* TODO: Add the valid expansion nodes to their parents */
+		for(int i = 0; i<nodeCount; i++){
+			AS_Node * children = hostExpansionNodes + config->maxNodesPerExpansion*i;
+			int size = hostExpansionSizes[i];
+			char * validity = expansionValidity + config->maxNodesPerExpansion*i;
+			int j = 0;
+			AS_Node * node = nodesToExpand[i];
+			node->children = (AS_NodePointer *) malloc(sizeof(AS_NodePointer) * config->maxNodesPerExpansion);
+			int c = 0; /* Counter for actual children */
+			while(j<size){
+				if(validity[j] && !ClosedSet_hasNode(closedSet, children + j)){
+					/* Create a node and copy the child */
+					children[j].parent = node;
+					AS_Node * child = (AS_Node *) malloc(sizeof(AS_Node));
+					memcpy(child, children + j, sizeof(AS_Node));
+					node->children[c] = child;
+					c++;
+					Queue_insert(queue, child);
+				}
+				j++;
+			}
+			node->childrenLength = c;
+			node->children = (AS_NodePointer *) realloc(node->children, c*sizeof(AS_NodePointer));
+		}
 	}
 	
 	printf("loop count = %d\n", loopCount);
 	
-	//Queue_free(queue);
-	//ClosedSet_free(closedSet);
+	Queue_free(queue);
+	ClosedSet_free(closedSet);
+	
+	free(expansionNodes);
+	free(expansionSizes);
+	free(hostExpansionNodes);
+	free(hostExpansionSizes);
+	free(expansionValidity);
+	free(nodesToExpand);
+	
+	
 	return path;
 }
 
@@ -259,7 +362,12 @@ void AS_freePath(AS_NodePointer * path){
 }
 
 AS_Node * newASNode(double heuristic, double cost, AS_Node * parent){
-	AS_Node * node = new AS_Node;
+	AS_Node * node = (AS_Node *) malloc(sizeof(AS_Node));
+	ASNode_init(node, heuristic, cost, parent);
+	return node;
+}
+
+void ASNode_init(AS_Node * node, double heuristic, double cost, AS_Node * parent){
 	node->data = NULL;
 	node->state = NULL;
 	node->parent = parent;
@@ -268,7 +376,6 @@ AS_Node * newASNode(double heuristic, double cost, AS_Node * parent){
 	node->status = AS_STATUS_IDLE;
 	node->childrenLength = 0;
 	node->children = NULL;
-	return node;
 }
 
 void ASNode_free(AS_Node * node){
@@ -280,23 +387,8 @@ void ASNode_free(AS_Node * node){
 		free(node->data);
 		node->data = NULL;
 	}
-	delete [] node->children;
-	delete node;
-}
-
-void cleanMem() {
-	Queue_free(queue);
-	ClosedSet_free(closedSet);
-}
-
-void cleanPath(AS_NodePointer * path) {
-	delete [] path[0]->children;
-	delete path[0];
-
-	for (int i = 1; path[i]; i++) {
-		ASNode_free(path[i]);
-	}
-	delete [] path;
+	free(node->children);
+	free(node);
 }
 
 void testQueue(){
@@ -378,4 +470,3 @@ void testClosedSet(){
 	
 	ClosedSet_free(cs);
 }
-
