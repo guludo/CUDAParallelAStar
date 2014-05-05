@@ -197,7 +197,7 @@ AS_NodePointer * AS_search(AS_Config * config){
 	
 	int loopCount = 0;
 	while(true){
-		printf("%d: queue size\n", queue->index);
+		//printf("%d: queue size\n", queue->index);
 
 		loopCount++;
 

@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
+#include <sys/time.h>
 #include "../pre-parallel/AStarPP.h"
 
 typedef int State;
@@ -153,8 +155,24 @@ char *read_string( int argc, char **argv, const char *option, char *default_valu
 	return default_value;
 }
 
+double read_timer( )
+{
+    static bool initialized = false;
+    static struct timeval start;
+    struct timeval end;
+    if( !initialized )
+    {
+        gettimeofday( &start, NULL );
+        initialized = true;
+    }
+    gettimeofday( &end, NULL );
+    return (end.tv_sec - start.tv_sec) + 1.0e-6 * (end.tv_usec - start.tv_usec);
+}
+
 int main(int argc, char **argv){
 	dimension = read_int(argc, argv, "-d", 3);
+	unsigned int seed = read_int(argc, argv, "-r", time(NULL) );
+	srand (seed);
 	
 	start = (State *) malloc(sizeof(State) * dimension * dimension);
 	
@@ -185,9 +203,9 @@ int main(int argc, char **argv){
 	
 	printf("Initial state:\n");
 	printState(start);
-	
+	double simulation_time = read_timer( );
 	AS_NodePointer * path = AS_search(&config);
-	
+	simulation_time = read_timer( ) - simulation_time;
 	if(path){
 		printf("Solution found.\n");
 		printPath(path);
@@ -195,6 +213,7 @@ int main(int argc, char **argv){
 	}else{
 		printf("Solution not found\n.");
 	}
+	printf( "simulation time = %g seconds", simulation_time);
 	return 0;
 	
 }
