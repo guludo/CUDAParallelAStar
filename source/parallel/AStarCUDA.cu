@@ -2,6 +2,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <float.h>
+#include <assert.h>
 #include "AStarCUDA.h"
 #include "Queue.h"
 
@@ -211,8 +212,11 @@ AS_NodePointer * AS_search(AS_Config * config){
 
 	dim3 grid_thread2D (NUM_BLOCKS, NUM_CHOICES + 1);
 
-	cudaMalloc((void **)&d_nodeBatch, sizeof(AS_Node) * NUM_BLOCKS);
-	cudaMalloc((void **)&d_fillResult, sizeof(char) * NUM_BLOCKS * NUM_CHOICES);
+	int err = cudaMalloc((void **)&d_nodeBatch, sizeof(AS_Node) * NUM_BLOCKS);
+	assert(err == cudaSuccess);
+	
+	err = cudaMalloc((void **)&d_fillResult, sizeof(char) * NUM_BLOCKS * NUM_CHOICES);
+	assert(err == cudaSuccess);
 
 	while (true) {
 		// no path found
@@ -276,8 +280,11 @@ AS_NodePointer * AS_search(AS_Config * config){
 		if (found)
 			break;
 
-		cudaMemcpy(d_nodeBatch, nodeBatch, sizeof(AS_Node) * nodeBatchSize, cudaMemcpyHostToDevice);
-		cudaMemset(d_fillResult, 0, sizeof(char) * NUM_BLOCKS * NUM_CHOICES);
+		err = cudaMemcpy(d_nodeBatch, nodeBatch, sizeof(AS_Node) * nodeBatchSize, cudaMemcpyHostToDevice);
+		assert(err == cudaSuccess);
+
+		err = cudaMemset(d_fillResult, 0, sizeof(char) * NUM_BLOCKS * NUM_CHOICES);
+		assert(err == cudaSuccess);
 
 		// perform A* search
 		AS_search_gpu <<<NUM_BLOCKS, NUM_CHOICES>>> (d_nodeBatch, nodeBatchSize, d_fillResult, dimension);
@@ -285,8 +292,9 @@ AS_NodePointer * AS_search(AS_Config * config){
 		// remove duplicates
 		AS_remove_duplicate_gpu<<<grid_block2D, grid_thread2D>>> (d_nodeBatch, nodeBatchSize, d_fillResult);
 
-		cudaMemcpy(fillResult, d_fillResult, sizeof(char) * NUM_BLOCKS * NUM_CHOICES, cudaMemcpyDeviceToHost);
-
+		err = cudaMemcpy(fillResult, d_fillResult, sizeof(char) * NUM_BLOCKS * NUM_CHOICES, cudaMemcpyDeviceToHost);
+		assert(err == cudaSuccess);
+		
 		for (int i =0; i < nodeBatchSize; i++) {
 			for (int j = 0; j < NUM_CHOICES; j++) {
 				//printf("%d: %d\n", j, fillResult[i * NUM_CHOICES + j]);
