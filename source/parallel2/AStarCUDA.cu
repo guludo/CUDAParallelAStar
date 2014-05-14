@@ -132,7 +132,6 @@ AS_NodePointer * AS_searchResult(AS_Node * node){
 	return path;
 }
 __device__ void expandNode_gpu(AS_Node * node, int size, char * states, char * fillResult, int dimension) {
-	State * state = (State *) node->state;
 	int l = dimension * dimension;
 	int dx = (1 - threadIdx.x / 2) * (1 - (1 - threadIdx) * 2);
 	int dy = (threadIdx.x / 2) * (1 - (3-threadIdx.x) * 2);
@@ -149,7 +148,7 @@ __global__ void AS_search_gpu (AS_Node * nodes, int size, char * states, char * 
 	expandNode_gpu(nodes, size, states, fillResult, dim);
 }
 
-__global__ void AS_remove_duplicate_gpu (AS_Node * nodes, int size, char * states, char * fillResult) {
+__global__ void AS_remove_duplicate_gpu (AS_Node * nodes, int size, char * states, char * fillResult, int dim) {
 
 	if (blockIdx.x >= threadIdx.x)
 		return;
@@ -302,15 +301,15 @@ AS_NodePointer * AS_search(AS_Config * config){
 		AS_search_gpu <<<NUM_BLOCKS, NUM_CHOICES>>> (d_nodeBatch, nodeBatchSize, d_states, d_fillResult, dimension);
 
 		// remove duplicates
-		AS_remove_duplicate_gpu<<<grid_block2D, grid_thread2D>>> (d_nodeBatch, nodeBatchSize, d_states, d_fillResult);
+		AS_remove_duplicate_gpu<<<grid_block2D, grid_thread2D>>> (d_nodeBatch, nodeBatchSize, d_states, d_fillResult, dimension);
 
 		err = cudaMemcpy(fillResult, d_fillResult, sizeof(char) * NUM_BLOCKS * NUM_CHOICES, cudaMemcpyDeviceToHost);
 		assert(err == cudaSuccess);
 
 		
 		for (int i =0; i < nodeBatchSize; i++) {
-			int x = nodes[i]->state[l];
-			int y = nodes[i]->state[l+1];
+			int x = *((State *)(nodes[i]->state)+l);
+			int y = *((State *)(nodes[i]->state)+l+1);
 			for (int j = 0; j < NUM_CHOICES; j++) {
 				//printf("%d: %d\n", j, fillResult[i * NUM_CHOICES + j]);
 				if (fillResult[i * NUM_CHOICES + j] == 1) {
@@ -318,7 +317,7 @@ AS_NodePointer * AS_search(AS_Config * config){
 					int dy = (j / 2) * (1 - (3-j) * 2);
 					State * cur = (State *) malloc (sizeof(State) * (l+3));
 					for (int k = 0; k < l; k++) {
-						cur[k] = node[i]->state[k];
+						cur[k] = *((State *)(nodes[i]->state)+k);
 					}
 					cur[x*dimension + y] = cur[(x+dx)*dimension + y + dy];
 					cur[(x+dx)*dimension + y + dy] = 0;
