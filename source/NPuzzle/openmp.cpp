@@ -33,34 +33,34 @@ bool isGoalState(void * state){
 	return s[i] == 0;
 }
 
+// double getHeuristic(void * state){
+// 	State * s = (State *) state;
+// 	int l = dimension * dimension;
+// 	double h = 0;
+// 	int i;
+// 	for(i = 0; i<l-1; i++){
+// 		if(s[i] != i+1) h++;
+// 	}
+// 	if(s[i] == 0) h++;
+// 	return h;
+// }
 double getHeuristic(void * state){
 	State * s = (State *) state;
-	int l = dimension * dimension;
 	double h = 0;
-	int i;
-	for(i = 0; i<l-1; i++){
-		if(s[i] != i+1) h++;
+	int d = dimension;
+	
+	for(int i = 0; i<d; i++){
+		for(int j = 0; j<d; j++){
+			int v = s[i*d + j] -1;
+			if(v >= 0){
+				int vi = v / d;
+				int vj = v % d;
+				h += abs(vi -i) + abs(vj -j);
+			}
+		}
 	}
-	if(s[i] == 0) h++;
 	return h;
 }
-// double getHeuristic(void * state){
-	// State * s = (State *) state;
-	// double h = 0;
-	// int d = dimension;
-	
-	// for(int i = 0; i<d; i++){
-		// for(int j = 0; j<d; j++){
-			// int v = s[i*d + j] -1;
-			// if(v >= 0){
-				// int vi = v / d;
-				// int vj = v % d;
-				// h += abs(vi -i) + abs(vj -j);
-			// }
-		// }
-	// }
-	// return h;
-// }
 
 bool stateHasSolution(State * s){
 	int sum = 0;
