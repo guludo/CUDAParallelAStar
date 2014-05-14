@@ -1,5 +1,5 @@
 /**
- * Pre-parallel implementation of A* Search
+ * Parallel implementation of A* Search
  */
 
 #include <iostream>

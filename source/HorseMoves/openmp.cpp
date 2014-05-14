@@ -5,7 +5,8 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include "../serial/AStarSerial.h"
+#include <omp.h>
+#include "../openMP/AStarMP.h"
 
 typedef struct{
 	int x;
@@ -48,67 +49,54 @@ AS_Node * createNode(int x, int y){
 	return node;
 }
 
-AS_NodePointer * expandNode(AS_Node * node){
+void expandNode(AS_Node * node, AS_NodePointer * nodeList, int processIndex){	
 	State * state = (State *) node->state;
 	int x = state->x;
 	int y = state->y;
 	int d = dimension;
-	
-	AS_NodePointer * nodeList = (AS_NodePointer *) malloc(sizeof(AS_NodePointer)*9);
 	int count = 0;
-	
-	if(x -2 >= 0) {
-		if(y - 2 >= 0){
-			nodeList[count++] = createNode(x-2, y-1);
-			nodeList[count++] = createNode(x-1, y-2);
-		}else if(y - 1 >= 0){
-			nodeList[count++] = createNode(x-2, y-1);				
-		}
-		if(y + 2 < d){
-			nodeList[count++] = createNode(x-2, y+1);
-			nodeList[count++] = createNode(x-1, y+2);
-		}else if(y + 1 < d){
-			nodeList[count++] = createNode(x-2, y+1);
-		}
-	}else if(x -1 >= 0){
-		if(y - 2 >= 0){
-			nodeList[count++] = createNode(x-1, y-2);
-		}
-		if(y + 2 < d){
-			nodeList[count++] = createNode(x-1, y+2);
-		}
+	switch(processIndex){
+		case 0:
+			if(x-2>=0 && y-1>=0){
+				nodeList[0] = createNode(x-2, y-1);
+			}
+			break;
+		case 1:
+			if(x-1>=0 && y-2>=0){
+				nodeList[1] = createNode(x-1, y-2);
+			}
+			break;
+		case 2:
+			if(x+1<d && y-2>=0){
+				nodeList[2] = createNode(x+1, y-2);
+			}
+			break;
+		case 3:
+			if(x+2<d && y-1>=0){
+				nodeList[3] = createNode(x+2, y-1);
+			}
+			break;
+		case 4:
+			if(x+2<d && y+1<d){
+				nodeList[4] = createNode(x+2, y+1);
+			}
+			break;
+		case 5:
+			if(x+1<d && y+2<d){
+				nodeList[5] = createNode(x+1, y+2);
+			}
+			break;
+		case 6:
+			if(x-1>=0 && y+2<d){
+				nodeList[6] = createNode(x-1, y+2);
+			}
+			break;
+		case 7:
+			if(x-2>=0 && y+1<d){
+				nodeList[7] = createNode(x-2, y+1);
+			}
+			break;
 	}
-	
-	if(x + 2 < d){
-		if(y - 2 >= 0){
-			nodeList[count++] = createNode(x+2, y-1);
-			nodeList[count++] = createNode(x+1, y-2);
-		}else if(y - 1 >= 0){
-			nodeList[count++] = createNode(x+2, y-1);				
-		}
-		if(y + 2 < d){
-			nodeList[count++] = createNode(x+2, y+1);
-			nodeList[count++] = createNode(x+1, y+2);
-		}else if(y + 1 < d){
-			nodeList[count++] = createNode(x+2, y+1);
-		}
-	}else if(x + 1 < d){
-		if(y - 2 >= 0){
-			nodeList[count++] = createNode(x+1, y-2);
-		}
-		if(y + 2 < d){
-			nodeList[count++] = createNode(x+1, y+2);
-		}
-	}
-	
-	if(count < 8){
-		nodeList = (AS_NodePointer *) realloc(nodeList, sizeof(AS_NodePointer)*(count+1));
-	}
-	nodeList[count] = NULL;
-
-	return nodeList;
-	
-	
 }
 
 //
@@ -140,6 +128,7 @@ char *read_string( int argc, char **argv, const char *option, char *default_valu
 
 int main(int argc, char **argv){
 	dimension = read_int(argc, argv, "-d", 12);
+	int nodesPerCycle = read_int(argc, argv, "-c", 2);
 	start = (State *) malloc(sizeof(State));
 	start->x = 0;
 	start->y = 0;
@@ -154,21 +143,31 @@ int main(int argc, char **argv){
 	config.expandNode = &expandNode;
 	config.queueInitialCapacity = 20000;
 	config.closedSetChunkSize = 20000;
+	config.expansionProcesses = 8;
+	config.maxNodesPerExpansion = 8;
+	config.nodesPerCycle = nodesPerCycle;
 	
 	AS_Node * startNode = newASNode(getHeuristic(start));
 	startNode->state = start;
 	config.startNode = startNode;
+	
+	int numthreads;
+	//#pragma omp parallel
+	//{
+	//numthreads = omp_get_num_threads();
+	//}
+	//printf("Number of threads: %d\n", numthreads);
 	
 	AS_NodePointer * path = AS_search(&config);
 	
 	if(path){
 		State * s = (State *) path[0]->state;
 		printf("Solution found! :)\n");
-		// printf("Horse moves to go from position (%d,%d) to position (%d, %d):\n(%d, %d)", start->x, start->y, goal.x, goal.y, s->x, s->y);
-		// for(int i = 1; path[i]; i++){
-			// s = (State *) path[i]->state;
-			// printf(",(%d,%d)", s->x, s->y);
-		// }
+		//printf("Horse moves to go from position (%d,%d) to position (%d, %d):\n(%d, %d)", start->x, start->y, goal.x, goal.y, s->x, s->y);
+		//for(int i = 1; path[i]; i++){
+		//	s = (State *) path[i]->state;
+		//	printf(",(%d,%d)", s->x, s->y);
+		//}
 		AS_freePath(path);
 	}else{
 		printf("Path not found from (%d,%d) to position (%d, %d):\n", start->x, start->y, goal.x, goal.y);

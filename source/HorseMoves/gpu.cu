@@ -136,6 +136,8 @@ __device__ void expandState(void * stateP, void * expansionStates, NodeData * no
 	*expansionLength = count;	
 }
 
+__device__ ExpandStateFunction expandState_d = expandState;
+
 //
 //  command line option processing
 //
@@ -170,18 +172,26 @@ int main(int argc, char **argv){
 	start = (State *) malloc(sizeof(State));
 	start->x = 0;
 	start->y = 0;
-	
+	ExpandStateFunction expandState_h;
+	cudaError_t e;
+
 	goal.x = dimension-1;
 	goal.y = dimension-1;
 
-	cudaMemcpyToSymbol("deviceGoal", &goal, sizeof(State), 0, cudaMemcpyHostToDevice);
-	cudaMemcpyToSymbol("deviceDimension", &dimension, sizeof(int), 0, cudaMemcpyHostToDevice);
+	e = cudaMemcpyToSymbol("deviceGoal", &goal, sizeof(State), 0, cudaMemcpyHostToDevice);
+	if(e != cudaSuccess) fprintf(stderr, "Error on memory to symbol deviceGoal\n");
+
+	e = cudaMemcpyToSymbol("deviceDimension", &dimension, sizeof(int), 0, cudaMemcpyHostToDevice);
+	if(e != cudaSuccess) fprintf(stderr, "Error on memory to symbol deviceDimension\n");
 	
+	e = cudaMemcpyFromSymbol(&expandState_h, "expandState_d", sizeof(ExpandStateFunction), 0, cudaMemcpyDeviceToHost);
+	if(e != cudaSuccess) fprintf(stderr, "Error on copying from symbol expandState_d\n");
+
 	AS_Config config;
 	AS_initConfig(&config);
 	config.areSameStates = &areSameState;
 	config.isGoalState = &isGoalState;
-	config.expandState = &expandState;
+	config.expandState = expandState_h;
 	config.queueInitialCapacity = 20000;
 	config.closedSetChunkSize = 20000;
 	config.stateSize = sizeof(State);

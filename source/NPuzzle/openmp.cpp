@@ -5,7 +5,7 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
-#include "../pre-parallel/AStarPP.h"
+#include "../openmp/AStarMP.h"
 
 typedef int State;
 
@@ -93,16 +93,26 @@ bool stateHasSolution(State * s){
 	return solvable;
 }
 
-void createNode(AS_Node * node, State * oldState, int swapIndexA, int swapIndexB){
+// void createNode(AS_Node * node, State * oldState, int swapIndexA, int swapIndexB){
+	// State * state = (State *) malloc(sizeof(int)*dimension*dimension);
+	// memcpy(state, oldState, sizeof(int)*dimension*dimension);
+	// state[swapIndexA] = oldState[swapIndexB];
+	// state[swapIndexB] = oldState[swapIndexA];
+	// ASNode_init(node, getHeuristic(state));
+	// node->state = state;
+// }
+
+AS_Node * createNode(State * oldState, int swapIndexA, int swapIndexB){
 	State * state = (State *) malloc(sizeof(int)*dimension*dimension);
 	memcpy(state, oldState, sizeof(int)*dimension*dimension);
 	state[swapIndexA] = oldState[swapIndexB];
 	state[swapIndexB] = oldState[swapIndexA];
-	ASNode_init(node, getHeuristic(state));
+	AS_Node * node = newASNode(getHeuristic(state));
 	node->state = state;
+	return node;
 }
 
-void expandNode(AS_Node * node, AS_Node * expansionNodes, int * expansionLength){
+void expandNode(AS_Node * node, AS_NodePointer * nodeList, int processIndex){
 
 	State * state = (State *) node->state;
 	int l = dimension * dimension;
@@ -117,30 +127,21 @@ void expandNode(AS_Node * node, AS_Node * expansionNodes, int * expansionLength)
 		}
 	}
 	
-	AS_NodePointer * nodeList = (AS_NodePointer *) malloc(sizeof(AS_NodePointer)*5);
-	int c = 0;
-	
-	if(emtpyTileI-1 >= 0){
-		createNode(expansionNodes + c, state, emptyTileIndex, emptyTileIndex-dimension);
-		c++;
+	if(processIndex == 0 && emtpyTileI-1 >= 0){
+		nodeList[0] = createNode(state, emptyTileIndex, emptyTileIndex-dimension);
 	}
 	
-	if(emtpyTileI+1 < dimension){
-		createNode(expansionNodes + c, state, emptyTileIndex, emptyTileIndex+dimension);
-		c++;
+	if(processIndex == 1 && emtpyTileI+1 < dimension){
+		nodeList[1] = createNode(state, emptyTileIndex, emptyTileIndex+dimension);
 	}
 	
-	if(emtpyTileJ-1 >= 0){
-		createNode(expansionNodes + c, state, emptyTileIndex, emptyTileIndex-1);
-		c++;
+	if(processIndex == 2 && emtpyTileJ-1 >= 0){
+		nodeList[2] = createNode(state, emptyTileIndex, emptyTileIndex-1);
 	}
 	
-	if(emtpyTileJ+1 < dimension){
-		createNode(expansionNodes + c, state, emptyTileIndex, emptyTileIndex+1);
-		c++;
+	if(processIndex == 3 && emtpyTileJ+1 < dimension){
+		nodeList[3] = createNode(state, emptyTileIndex, emptyTileIndex+1);
 	}
-	
-	*expansionLength = c;
 }
 
 void printState(State * state){
@@ -188,6 +189,7 @@ char *read_string( int argc, char **argv, const char *option, char *default_valu
 
 int main(int argc, char **argv){
 	dimension = read_int(argc, argv, "-d", 3);
+	int nodesPerCycle = read_int(argc, argv, "-c", 8);
 	
 	start = (State *) malloc(sizeof(State) * dimension * dimension);
 	
@@ -215,8 +217,11 @@ int main(int argc, char **argv){
 	config.isGoalState = &isGoalState;
 	config.expandNode = &expandNode;
 	config.queueInitialCapacity = 20000;
-	config.closedSetChunkSize = 20000;
+	config.closedSetChunkSize = 30000;
 	config.startNode = startNode;
+	config.expansionProcesses = 4;
+	config.maxNodesPerExpansion = 4;
+	config.nodesPerCycle = nodesPerCycle;
 	
 	printf("Initial state:\n");
 	printState(start);

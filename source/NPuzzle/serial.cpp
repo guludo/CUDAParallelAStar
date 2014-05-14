@@ -45,6 +45,24 @@ double getHeuristic(void * state){
 	return h;
 }
 
+// double getHeuristic(void * state){
+	// State * s = (State *) state;
+	// double h = 0;
+	// int d = dimension;
+	
+	// for(int i = 0; i<d; i++){
+		// for(int j = 0; j<d; j++){
+			// int v = s[i*d + j] -1;
+			// if(v >= 0){
+				// int vi = v / d;
+				// int vj = v % d;
+				// h += abs(vi -i) + abs(vj -j);
+			// }
+		// }
+	// }
+	// return h;
+// }
+
 AS_Node * createNode(State * oldState, int swapIndexA, int swapIndexB){
 	State * state = (State *) malloc(sizeof(int)*dimension*dimension);
 	memcpy(state, oldState, sizeof(int)*dimension*dimension);
@@ -116,8 +134,12 @@ void printPath(AS_NodePointer * path){
 bool stateHasSolution(State * s){
 	int sum = 0;
 	int l = dimension * dimension;
+	int blankRow;
 	for(int i = 0; i<l; i++){
-		if(s[i] == 0) continue;
+		if(s[i] == 0){
+			blankRow = dimension -(i / dimension); //From bottom
+			continue;
+		}
 		for(int j = i+1; j<l; j++){
 			if(s[j] == 0) continue;
 			if(s[j] < s[i]){
@@ -125,7 +147,19 @@ bool stateHasSolution(State * s){
 			}
 		}
 	}
-	return sum % 2 == 0;
+	bool solvable;
+	if(dimension % 2 == 0){
+		if(blankRow % 2 == 0){
+			solvable = sum % 2 != 0;
+		}else{
+			solvable = sum % 2 == 0;
+		}
+	}else{
+		solvable = sum % 2 == 0;
+	}
+	if(solvable) printf("Has solution.\n");
+	else printf("Does not have solution.\n");
+	return solvable;
 }
 
 //
@@ -160,17 +194,19 @@ int main(int argc, char **argv){
 	
 	start = (State *) malloc(sizeof(State) * dimension * dimension);
 	
-	int l = dimension * dimension;
-	for(int i = 0; i<l; i++){
-		start[i] = 0;
-	}
-	
-	//Create a random state
-	for(int i = 1; i<l; i++){
-		int index = rand() % l;
-		while(start[index] != 0) index = rand() % l;
-		start[index] = i;
-	}
+	do{
+		int l = dimension * dimension;
+		for(int i = 0; i<l; i++){
+			start[i] = 0;
+		}
+		
+		//Create a random state
+		for(int i = 1; i<l; i++){
+			int index = rand() % l;
+			while(start[index] != 0) index = rand() % l;
+			start[index] = i;
+		}
+	}while(!stateHasSolution(start));
 	
 	
 	AS_Node * startNode = newASNode(getHeuristic(start));
@@ -192,7 +228,7 @@ int main(int argc, char **argv){
 	
 	if(path){
 		printf("Solution found.\n");
-		printPath(path);
+		//printPath(path);
 		AS_freePath(path);
 	}else{
 		printf("Solution not found\n.");

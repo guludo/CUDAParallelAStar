@@ -9,7 +9,8 @@
 #include <string.h>
 #include <time.h>
 #include <sys/time.h>
-#include "AStarPP.h"
+#include <omp.h>
+#include "AStarMP.h"
 #include "ClosedSet.h"
 #include "Queue.h"
 
@@ -36,6 +37,7 @@ double read_timer( )
 	gettimeofday( &end, NULL );
 	return (end.tv_sec - start.tv_sec) + 1.0e-6 * (end.tv_usec - start.tv_usec);
 }
+
 
 using namespace std;
 
@@ -167,12 +169,41 @@ bool ClosedSet_hasNode(ClosedSet * closedSet, AS_NodePointer node){
 	return false;
 }
 
+// bool ClosedSet_hasNode(ClosedSet * closedSet, AS_NodePointer node){
+	// ClosedSetList * list = closedSet->list;
+	// int chunkSize = closedSet->chunkSize;
+	// int length = closedSet->length;
+	// int count = 0;
+	// while(list){
+		// bool found = false;
+		// bool stop = false;
+		// #pragma omp for shared(found, stop, count)
+		// for(int i = 0; i<chunkSize; i++){
+			// if(stop) continue;
+			// if(closedSet->areSameStates(node->state, list->nodes[i]->state)){
+				// found = true;
+				// stop = true;
+			// }
+			// count++;
+			// if(count>=length){
+				// stop = true;
+			// }
+		// }
+		// if(found) return true;
+		// list = list->next;
+	// }
+	// return false;
+// }
+
+
 void AS_initConfig(AS_Config * config){
 	config->closedSetChunkSize = AS_CLOSEDSET_CHUNK_SIZE;
 	config->queueInitialCapacity = AS_QUEUE_INITIAL_CAPACITY;
 	config->queueIncreaseCapacity = AS_QUEUE_INCREASE_CAPACITY;
 	config->nodesPerCycle = AS_NODES_PER_CYCLE;
 	config->maxNodesPerExpansion = AS_MAX_NODES_PER_EXPANSION;
+	config->expansionProcesses = AS_EXPANSION_PROCESSES;
+	config->solveConflicts = false;
 }
 
 void AS_freeTree(AS_Node * root){
@@ -217,23 +248,17 @@ AS_NodePointer * AS_searchResult(AS_Node * node){
 	return path;
 }
 
-void AS_nodeCycle(AS_Config * config, AS_Node * node, AS_Node * expansionNodes, int * expansionLength){
-	config->expandNode(node, expansionNodes, expansionLength);
-}
-
 AS_NodePointer * AS_search(AS_Config * config){
 	double t0 = read_timer();
 	AS_NodePointer * path = NULL;
 	
 	/* Allocate space for expansion */
-	int expansionNodesLength = config->nodesPerCycle * (config->maxNodesPerExpansion);
-	int sizeofExpansionNodes = sizeof(AS_Node) * expansionNodesLength;
-	AS_Node * expansionNodes = (AS_Node *) malloc(sizeofExpansionNodes);
+	int expansionNodesLength = config->nodesPerCycle * config->maxNodesPerExpansion;
+	AS_NodePointer * expansionNodes = (AS_NodePointer *) malloc(sizeof(AS_NodePointer) * expansionNodesLength);
 	int * expansionSizes = (int *) malloc(sizeof(int) * config->nodesPerCycle);
-	AS_Node * hostExpansionNodes = (AS_Node *) malloc(sizeofExpansionNodes);
-	int * hostExpansionSizes = (int *) malloc(sizeof(int) * config->nodesPerCycle);
-	char * expansionValidity = (char *) malloc(sizeof(char) * expansionNodesLength);
 	AS_NodePointer * nodesToExpand = (AS_NodePointer *) malloc(sizeof(AS_NodePointer) * config->nodesPerCycle);
+	char * expansionValidity = (char *) malloc(sizeof(char) * expansionNodesLength);
+	int * closedSetHasNode = (int *) malloc(sizeof(int) * expansionNodesLength);
 	
 	ClosedSet * closedSet = newClosedSet(config->areSameStates, config->closedSetChunkSize);
 	Queue * queue = newQueue(config->queueInitialCapacity, config->queueIncreaseCapacity);
@@ -241,130 +266,200 @@ AS_NodePointer * AS_search(AS_Config * config){
 	Queue_insert(queue, config->startNode);
 	
 	int loopCount = 0;
-	while(true){
-		loopCount++;
-		if(Queue_isEmpty(queue)){
-			AS_freeTree(config->startNode);
-			break;
-		}
+	int nodeCount;
+	bool isBreak = false;
+	int cycleLength;
+	#pragma omp parallel shared(queue, closedSet, expansionValidity, isBreak, nodeCount, cycleLength, closedSetHasNode)
+	{
+		while(true){
 		
-		nodesToExpand[0] = Queue_remove(queue);
-		ClosedSet_add(closedSet, nodesToExpand[0]);
-		
-		/* If first element is the goal state */
-		if(config->isGoalState(nodesToExpand[0]->state)){
-			path = AS_searchResult(nodesToExpand[0]);
-			break;
-		}
-		
-		int nodeCount = 1;
-		while(nodeCount < config->nodesPerCycle && !Queue_isEmpty(queue)){
-			nodesToExpand[nodeCount] = Queue_remove(queue);
-			ClosedSet_add(closedSet, nodesToExpand[nodeCount]);
-			nodeCount++;
-		}
-		
-		/* PSEUDO-PARALLELISM: Iterating blocks */
-		for(int blockIndex = 0; blockIndex < nodeCount; blockIndex++){
-			AS_nodeCycle(config, nodesToExpand[blockIndex], expansionNodes + config->maxNodesPerExpansion * blockIndex, expansionSizes + blockIndex);
-		}
-		/* Copy expansionNodes to host */
-		memcpy(hostExpansionNodes, expansionNodes, sizeof(AS_Node)*nodeCount*config->maxNodesPerExpansion);
-		memcpy(hostExpansionSizes, expansionSizes, sizeof(int)*nodeCount);
-		
-		
-		/* 
-		 * Mark which nodes in the expansion are valid, i.e., for repeated states,
-		 * the state with the minimal cost is set as valid, the remainder as invalid.
-		 * PS: Maybe we can make this parallel too.
-		 */
-		memset(expansionValidity, AS_V_IDLE, expansionNodesLength);
-		/* li - localIndex, bi - blockIndex */
-		for(int i = 0, bi=0, li=0; i<expansionNodesLength; ){
-			if(li < hostExpansionSizes[bi] && expansionValidity[i] == AS_V_IDLE){
-				expansionValidity[i] = AS_V_VALID;
-				int validIndex = i;
-				double validCost = hostExpansionNodes[i].cost + hostExpansionNodes[i].heuristic;
-				/* lj - localIndex, bj - blockIndex */
-				for(int bj = bi+1, lj = 0, j = bj*config->maxNodesPerExpansion; j<expansionNodesLength; ){
-					bool goToNextBlock = false;
-					if(lj < hostExpansionSizes[bj] && expansionValidity[j] == AS_V_IDLE){
-						void * stateA = hostExpansionNodes[validIndex].state;
-						void * stateB = hostExpansionNodes[j].state;
-						if(config->areSameStates(stateA, stateB)){
-							double costB = hostExpansionNodes[j].cost + hostExpansionNodes[j].heuristic;
-							if(costB < validCost){
-								expansionValidity[j] = AS_V_VALID;
-								expansionValidity[validIndex] = AS_V_INVALID;
-								validCost = costB;
-								validIndex = j;
-							}else{
-								expansionValidity[j] = AS_V_INVALID;
-							}
-							goToNextBlock = true;
-						}
+			#pragma omp master
+			{
+				isBreak = false;
+				loopCount++;
+				if(Queue_isEmpty(queue)){
+					AS_freeTree(config->startNode);
+					isBreak = true;
+				}else{
 					
-					}
-					if(lj + 1 < hostExpansionSizes[bj] && !goToNextBlock){
-						j++;
-						lj++;
-					}else if(bj + 1 < nodeCount){
-						bj++;
-						j = bj * config->maxNodesPerExpansion;
-						lj = 0;
-					}else{
-						break;
+					nodesToExpand[0] = Queue_remove(queue);
+					ClosedSet_add(closedSet, nodesToExpand[0]);
+					
+					/* If first element is the goal state */
+					if(config->isGoalState(nodesToExpand[0]->state)){
+						path = AS_searchResult(nodesToExpand[0]);
+						isBreak = true;
 					}
 				}
 			}
-			if(li + 1 < hostExpansionSizes[bi]){
-				i++;
-				li++;
-			}else if(bi + 1 < nodeCount){
-				bi++;
-				i = bi * config->maxNodesPerExpansion;
-				li = 0;
-			}else{
+			
+			{
+			#pragma omp barrier
+			}
+			if(isBreak){
 				break;
 			}
-		}
-		
-		/* TODO: Add the valid expansion nodes to their parents */
-		for(int i = 0; i<nodeCount; i++){
-			AS_Node * children = hostExpansionNodes + config->maxNodesPerExpansion*i;
-			int size = hostExpansionSizes[i];
-			char * validity = expansionValidity + config->maxNodesPerExpansion*i;
-			int j = 0;
-			AS_Node * node = nodesToExpand[i];
-			node->children = (AS_NodePointer *) malloc(sizeof(AS_NodePointer) * config->maxNodesPerExpansion);
-			int c = 0; /* Counter for actual children */
-			while(j<size){
-				if(validity[j] && !ClosedSet_hasNode(closedSet, children + j)){
-					/* Create a node and copy the child */
-					children[j].parent = node;
-					AS_Node * child = (AS_Node *) malloc(sizeof(AS_Node));
-					memcpy(child, children + j, sizeof(AS_Node));
-					node->children[c] = child;
-					c++;
-					Queue_insert(queue, child);
+			
+			#pragma omp master
+			{
+				nodeCount = 1;
+			
+				while(nodeCount < config->nodesPerCycle && !Queue_isEmpty(queue)){
+					nodesToExpand[nodeCount] = Queue_remove(queue);
+					ClosedSet_add(closedSet, nodesToExpand[nodeCount]);
+					nodeCount++;
 				}
-				j++;
+				
+				
+				memset(expansionNodes, 0, sizeof(AS_NodePointer) * expansionNodesLength);
+				
+				cycleLength = config->expansionProcesses * nodeCount;
+				
+				//memset(expansionSizes, 0, sizeof(int)*config->nodesPerCycle);
 			}
-			node->childrenLength = c;
-			node->children = (AS_NodePointer *) realloc(node->children, c*sizeof(AS_NodePointer));
+			
+			{
+			#pragma omp barrier
+			}
+			
+			#pragma omp for
+			for(int i = 0; i < cycleLength; i++){
+				int blockIndex = i / config->expansionProcesses;
+				int processIndex = i % config->expansionProcesses;
+				config->expandNode(nodesToExpand[blockIndex], expansionNodes + blockIndex*config->maxNodesPerExpansion, processIndex);
+			}
+			
+			#pragma omp for
+			for(int bi = 0; bi<nodeCount; bi++){
+				int c = 0;
+				AS_NodePointer * nodes = expansionNodes + bi*config->maxNodesPerExpansion;
+				for(int li = 0; li<config->maxNodesPerExpansion; li++){
+					if(nodes[li]){
+						nodes[c] = nodes[li];
+						c++;
+					}
+				}
+				expansionSizes[bi] = c;
+			}
+			
+			/* 
+			 * Mark which nodes in the expansion are valid, i.e., for repeated states,
+			 * the state with the minimal cost is set as valid, the remainder as invalid.
+			 * PS: Maybe we can make this parallel too.
+			 */
+			#pragma omp master
+			{
+				if(config->solveConflicts){
+					memset(expansionValidity, AS_V_IDLE, sizeof(char) * expansionNodesLength);
+					/* li - localIndex, bi - blockIndex */
+					/* TODO: Fix it, it hangs for some configurations */
+					for(int i = 0, bi=0, li=0; i<expansionNodesLength && bi<nodeCount; ){
+						if(li < expansionSizes[bi] && expansionValidity[i] == AS_V_IDLE){
+							expansionValidity[i] = AS_V_VALID;
+							int validIndex = i;
+							double validCost = expansionNodes[i]->cost + expansionNodes[i]->heuristic;
+							/* lj - localIndex, bj - blockIndex */
+							for(int bj = bi+1, lj = 0, j = bj*config->maxNodesPerExpansion; j<expansionNodesLength && bj<nodeCount; ){
+								bool goToNextBlock = false;
+								if(lj < expansionSizes[bj] && expansionValidity[j] == AS_V_IDLE){
+									void * stateA = expansionNodes[validIndex]->state;
+									void * stateB = expansionNodes[j]->state;
+									
+									if(config->areSameStates(stateA, stateB)){
+										double costB = expansionNodes[j]->cost + expansionNodes[j]->heuristic;
+										if(costB < validCost){
+											expansionValidity[j] = AS_V_VALID;
+											expansionValidity[validIndex] = AS_V_INVALID;
+											validCost = costB;
+											validIndex = j;
+										}else{
+											expansionValidity[j] = AS_V_INVALID;
+										}
+										goToNextBlock = true;
+									}
+								
+								}
+								if(lj + 1 < expansionSizes[bj] && !goToNextBlock){
+									j++;
+									lj++;
+								}else if(bj + 1 < nodeCount){
+									bj++;
+									j = bj * config->maxNodesPerExpansion;
+									lj = 0;
+								}else{
+									break;
+								}
+							}
+						}
+						if(li + 1 < expansionSizes[bi]){
+							i++;
+							li++;
+						}else if(bi + 1 < nodeCount){
+							bi++;
+							i = bi * config->maxNodesPerExpansion;
+							li = 0;
+						}else{
+							break;
+						}
+					}
+				}
+
+				// for(int i = 0; i<expansionNodesLength; i++){
+					// bool valid = config->solveConflicts ? expansionValidity[i] == AS_V_VALID : true;
+					// int bi = i / config->maxNodesPerExpansion;
+					// int li = i % config->maxNodesPerExpansion;
+					// if(valid && li < expansionSizes[bi]){
+						// if(ClosedSet_hasNode(closedSet, expansionNodes[i])){
+							// closedSetHasNode[i] = 1;
+						// }else{
+							// closedSetHasNode[i] = 0;
+						// }
+					// }else{
+						// closedSetHasNode[i] = 0;
+					// }
+				// }
+
+				for(int i = 0; i<nodeCount; i++){
+					AS_NodePointer * children = expansionNodes + config->maxNodesPerExpansion*i;
+					int size = expansionSizes[i];
+					char * validity = expansionValidity + config->maxNodesPerExpansion*i;
+					int j = 0;
+					AS_Node * node = nodesToExpand[i];
+					node->children = (AS_NodePointer *) malloc(sizeof(AS_NodePointer) * config->maxNodesPerExpansion);
+					int c = 0; /* Counter for actual children */
+					while(j<size){
+						bool valid = config->solveConflicts ? validity[j] == AS_V_VALID : true;
+						if(valid && !ClosedSet_hasNode(closedSet, children[j])){
+						//if(valid && !closedSetHasNode[i*config->maxNodesPerExpansion+j]){
+							children[j]->parent = node;
+							node->children[c] = children[j];
+							c++;
+							Queue_insert(queue, children[j]);
+						}
+						j++;
+					}
+					node->childrenLength = c;
+					node->children = (AS_NodePointer *) realloc(node->children, c*sizeof(AS_NodePointer));
+				}
+			
+			}
+			{
+			#pragma omp barrier
+			}
 		}
 	}
 	
+	
 	printf("loop count = %d\n", loopCount);
 	printf("Execution time: %f\n", read_timer() -t0);
+	
 	
 	Queue_free(queue);
 	ClosedSet_free(closedSet);
 	
 	free(expansionNodes);
 	free(expansionSizes);
-	free(hostExpansionNodes);
-	free(hostExpansionSizes);
+	free(closedSetHasNode);
 	free(expansionValidity);
 	free(nodesToExpand);
 	
