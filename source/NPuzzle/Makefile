@@ -1,9 +1,23 @@
 
 CC = g++ -O3 -g
 
-TARGETS=serial pre-parallel
+NVCC = nvcc -O3 -g -arch sm_20
+
+TARGETS=serial pre-parallel parallel
+
+r:
+	make -C ../serial
+	make -C ../pre-parallel
+	make -C ../parallel
+	make
 
 all: $(TARGETS)
+
+parallel: parallel.o ../parallel2/AStarCUDA.o
+	$(NVCC) -o $@ $< ../parallel2/AStarCUDA.o
+
+parallel.o: parallel.cu
+	$(NVCC) -c $<
 
 serial: serial.o ../serial/AStarSerial.o
 	$(CC) -o $@ $< ../serial/AStarSerial.o
