@@ -5,6 +5,8 @@
 #include <stdlib.h>
 #include <stdio.h>
 #include <string.h>
+#include <time.h>
+#include <sys/time.h>
 #include "../serial/AStarSerial.h"
 
 typedef int State;
@@ -191,7 +193,8 @@ char *read_string( int argc, char **argv, const char *option, char *default_valu
 
 int main(int argc, char **argv){
 	dimension = read_int(argc, argv, "-d", 3);
-	
+	unsigned int seed = read_int(argc, argv, "-r", time(NULL) );
+	srand (seed);
 	start = (State *) malloc(sizeof(State) * dimension * dimension);
 	
 	do{
