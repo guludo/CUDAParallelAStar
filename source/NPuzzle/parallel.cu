@@ -10,12 +10,7 @@
 #include "../parallel2/AStarCUDA.h"
 
 //#define PATH_PRINT
-
-
-int dimension;
-
-State * start;
-
+State *start;
 bool areSameState(void * stateA, void * stateB){
 	State * a = (State *) stateA;
 	State * b = (State *) stateB;
@@ -112,18 +107,10 @@ double read_timer( )
 int main(int argc, char **argv){
 	dimension = read_int(argc, argv, "-d", 3);
 	unsigned int seed = read_int(argc, argv, "-r", time(NULL) );
-	const char * heuristicFunction = read_string(argc, argv, "-h", (char *)"manhattan");
-	if (!strcmp (heuristicFunction, "hamming")) {
-		heuristic = HAMMING;
-		printf("Hamming heuristic\n");
-	}
-	else if (!strcmp (heuristicFunction, "manhattan")) {
-		heuristic = MANHATTAN;
-		printf("Manhattan heuristic\n");
-	}
+
 	srand (seed);
 	
-	start = (State *) malloc(sizeof(State) * (dimension * dimension + 3);
+	start = (State *) malloc(sizeof(State) * (dimension * dimension + 3));
 
 	int l = dimension * dimension;
 	for(int i = 0; i<l; i++){
@@ -139,22 +126,22 @@ int main(int argc, char **argv){
 	
 	for (int i = 0; i < dimension * dimension; i++) {
 		if (start[i] == 0) {
-			start[dimension * dimension] = i/dimension;
-			start[dimension * dimension+1] = i%dimension;
+			start[l] = i/dimension;
+			start[l+1] = i%dimension;
 			break;
 		}
 	}
 
-	start[dimension * dimension + 2] = -2;
+	start[dimension * dimension + 2] = -4;
 	
 	AS_Node * startNode = newASNode(getHeuristic(start));
 	startNode->state = start;
 	
 	AS_Config config;
 	AS_initConfig(&config);
-	config.areSameStates = &areSameState;
+	config.areSameState = &areSameState;
 	config.isGoalState = &isGoalState;
-	config.expandNode = &expandNode;
+	//config.expandNode = &expandNode;
 	config.queueInitialCapacity = 20000;
 	config.closedSetChunkSize = 20000;
 	config.startNode = startNode;

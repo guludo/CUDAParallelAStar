@@ -7,18 +7,13 @@
 #define AS_STATUS_IN_PATH 2
 
 typedef int State;
-typedef enum {MANHATTAN, HAMMING} Distance_t;
-Distance_t heuristic;
 
-extern State goal;
-extern State start;
+
 extern int dimension;
 
 typedef struct _AS_Node {
 	struct _AS_Node * parent;
-	void * state;
-	State cur;
-	State prev;
+	State * state;
 	void * data;
 	double heuristic;
 	double cost;
@@ -47,6 +42,10 @@ void AS_initConfig(AS_Config * config);
  * Performs the A* Search. The parameter config defines different parameters for the search.
  */
 AS_NodePointer * AS_search(AS_Config * config);
+/**
+ * Frees the path created by AS_searchResult.
+ */
+void AS_freePath(AS_NodePointer * path);
 /**
  * Returns the NULL ended array of the path found to the goal.
  * And also clears those nodes in the tree that are not part of the path.

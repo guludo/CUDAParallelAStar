@@ -341,6 +341,14 @@ AS_Node * createNode(int x, int y){
 	return node;
 }
 
+int deb = 0;
+void AS_freePath(AS_NodePointer * path){
+	for(int i = 0; path[i]; i++){
+		ASNode_free(path[i]);
+	}
+	delete [] path;
+}
+
 AS_Node * newASNode(double heuristic, double cost, AS_Node * parent){
 	AS_Node * node = new AS_Node;
 	node->data = NULL;

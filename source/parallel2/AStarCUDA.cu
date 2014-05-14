@@ -12,8 +12,7 @@
 
 Queue * queue;
 
-State goal;
-State start;
+
 int dimension;
 
 Queue * newQueue(int capacity){
@@ -101,6 +100,13 @@ void AS_freeTree(AS_Node * root){
 		}
 	}
 }
+int deb = 0;
+void AS_freePath(AS_NodePointer * path){
+	for(int i = 0; path[i]; i++){
+		ASNode_free(path[i]);
+	}
+	delete [] path;
+}
 
 AS_NodePointer * AS_searchResult(AS_Node * node){
 	/* Count the number of nodes */
@@ -131,52 +137,66 @@ AS_NodePointer * AS_searchResult(AS_Node * node){
 	
 	return path;
 }
-__device__ void expandNode_gpu(AS_Node * node, int size, char * states, char * fillResult, int dimension) {
+__device__ void expandNode_gpu(AS_Node * node, int size, int * states, char * fillResult, int dimension) {
 	int l = dimension * dimension;
-	int dx = (1 - threadIdx.x / 2) * (1 - (1 - threadIdx) * 2);
-	int dy = (threadIdx.x / 2) * (1 - (3-threadIdx.x) * 2);
-	int x = states[l] + dx;
-	int y = states[l+1] + dy;
-	if (x < 0 || x >= dimension || y < 0 || y >= dimension || (threadIdx.x + states[l+2] == 1) || (threadIdx.x + states[l+2] == 5)) 
+	int dy = (1 - threadIdx.x / 2) * (1 - (1 - threadIdx.x) * 2);
+	int dx = (threadIdx.x / 2) * (1 - (3-threadIdx.x) * 2);
+	int x = states[blockIdx.x * (l+3)+l] + dx;
+	int y = states[blockIdx.x * (l+3)+l+1] + dy;
+	if (x < 0 || x >= dimension || y < 0 || y >= dimension || (threadIdx.x + states[blockIdx.x * (l+3)+l+2] == 5) || (threadIdx.x + states[blockIdx.x*(l+3)+l+2] == 1)) 
 		return;
 	fillResult[blockIdx.x * blockDim.x + threadIdx.x] = 1;
 }
 
-__global__ void AS_search_gpu (AS_Node * nodes, int size, char * states, char * fillResult, int dim) {
+__global__ void AS_search_gpu (AS_Node * nodes, int size, int * states, char * fillResult, int dim) {
 	if (blockIdx.x >= size)
 		return;
 	expandNode_gpu(nodes, size, states, fillResult, dim);
 }
 
-__global__ void AS_remove_duplicate_gpu (AS_Node * nodes, int size, char * states, char * fillResult, int dim) {
+__global__ void AS_remove_duplicate_gpu (AS_Node * nodes, int size, int * states, char * fillResult, int dim) {
+
 
 	if (blockIdx.x >= threadIdx.x)
 		return;
+
+	if (threadIdx.y == NUM_CHOICES) {
+		int l = dim * dim;
+		int x1 = states[blockIdx.x * (l+3) + l];
+		int y1 = states[blockIdx.x * (l+3) + l+1];
+		int dy1 = (1 - blockIdx.y / 2) * (1 - (1 - blockIdx.y) * 2);
+		int dx1 = (blockIdx.y / 2) * (1 - (3-blockIdx.y) * 2);
+		for (int i = 0; i < l ; i++) {
+			if (i != (x1 + dx1) * dim + y1 + dy1 && i != (x1 ) * dim + y1 && states[blockIdx.x * (l+3) + i] != 
+				states[threadIdx.x * (l+3) + i])
+				return;
+		}
+		fillResult[blockIdx.x * NUM_CHOICES + blockIdx.y] = 0;
+		return;
+	}
 
 	if (fillResult[blockIdx.x * NUM_CHOICES + blockIdx.y] && fillResult[threadIdx.x * NUM_CHOICES + threadIdx.y] == 1) {
 		int l = dim * dim;
 		int x1 = states[blockIdx.x * (l+3) + l];
 		int y1 = states[blockIdx.x * (l+3) + l+1];
-		int dx1 = (1 - blockIdx.y / 2) * (1 - (1 - blockIdx.y) * 2);
-		int dy1 = (blockIdx.y / 2) * (1 - (3-blockIdx.y) * 2);
+		int dy1 = (1 - blockIdx.y / 2) * (1 - (1 - blockIdx.y) * 2);
+		int dx1 = (blockIdx.y / 2) * (1 - (3-blockIdx.y) * 2);
 		int x2 = states[threadIdx.x * (l+3) + l];
 		int y2 = states[threadIdx.x * (l+3) + l+1];
-		int dx2 = (1 - threadIdx.y / 2) * (1 - (1 - threadIdx.y) * 2);
-		int dy2 = (threadIdx.y / 2) * (1 - (3-threadIdx.y) * 2);
+		int dy2 = (1 - threadIdx.y / 2) * (1 - (1 - threadIdx.y) * 2);
+		int dx2 = (threadIdx.y / 2) * (1 - (3-threadIdx.y) * 2);
 		for (int i = 0; i < l; i++) {
-			if (states[blockIdx.x * (l+3) + i] == 0)
+			if (states[blockIdx.x * (l+3) + i] == 0 || states[blockIdx.x * (l+3) + i] == states[threadIdx.x * (l+3) + i])  
 				continue;
 			if (i == (x1 + dx1) * dim + y1 + dy1 && 
-				states[blockIdx.x * (l+3) + i] != states[threadIdx.x * (l+3) + x1 * dim + y1]) {
+				(x1 +dx1 != x2 + dx2 || y1+dy1!=y2+dy2)) {
 				return;
 			}
 			else if (i == x2 * dim + y2 && 
 				states[blockIdx.x * (l+3) + i] != states[threadIdx.x * (l+3) + (x2 + dx2) * dim + y2 + dy2]) {
 				return;
 			} 
-			else if (states[blockIdx.x * (l+3) + i] != states[threadIdx.x * (l+3) + i]) {
-				return;
-			}
+			return;
 		}
 		fillResult[threadIdx.x * NUM_CHOICES + threadIdx.y] = -1;
 	}
@@ -200,17 +220,17 @@ AS_NodePointer * AS_search(AS_Config * config){
 	AS_Node * nodeBatch = (AS_Node *) malloc (sizeof(AS_Node) * NUM_BLOCKS);
 	// fill results of newly created nodes
 	char * fillResult = (char *) malloc (sizeof(char) * NUM_BLOCKS * NUM_CHOICES);
-	char * states = (char *) malloc (sizeof(char) * NUM_BLOCKS * (dimension * dimension + 3));
+	int * states = (int *) malloc (sizeof(int) * NUM_BLOCKS * (dimension * dimension + 3));
 
 
 	// one batch of nodes and fill results in device
 	AS_Node * d_nodeBatch;
 	char * d_fillResult;
-	char * d_states; 
+	int * d_states; 
 
 	dim3 grid_block2D (NUM_BLOCKS, NUM_CHOICES);
 
-	dim3 grid_thread2D (NUM_BLOCKS, NUM_CHOICES);
+	dim3 grid_thread2D (NUM_BLOCKS, NUM_CHOICES+1);
 
 	int err = cudaMalloc((void **)&d_nodeBatch, sizeof(AS_Node) * NUM_BLOCKS);
 	assert(err == cudaSuccess);
@@ -218,11 +238,8 @@ AS_NodePointer * AS_search(AS_Config * config){
 	err = cudaMalloc((void **)&d_fillResult, sizeof(char) * NUM_BLOCKS * NUM_CHOICES);
 	assert(err == cudaSuccess);
 
-	err = cudaMalloc((void **)&d_states, sizeof(char) * NUM_BLOCKS * (dimension * dimension + 3));
+	err = cudaMalloc((void **)&d_states, sizeof(int) * NUM_BLOCKS * (dimension * dimension + 3));
 	assert(err == cudaSuccess);
-
-
-
 
 	while (true) {
 		// no path found
@@ -244,6 +261,7 @@ AS_NodePointer * AS_search(AS_Config * config){
 					break;
 				}
 				nodeBatch[i] = *(nodes[i]);
+				//printf("node %d: blank at (%d %d), direction %d\n", i, nodes[i]->state[l], nodes[i]->state[l+1], nodes[i]->state[l+2]);
 			}
 		}
 		else {
@@ -287,7 +305,7 @@ AS_NodePointer * AS_search(AS_Config * config){
 			break;
 
 		for (int i = 0; i < nodeBatchSize; i++) {
-			cudaMemcpy(&d_states[i*(dimension * dimension + 3)], nodes[i] -> state, sizeof(char) * (dimension * dimension +3), 
+			cudaMemcpy(&d_states[i*(dimension * dimension + 3)], nodes[i] -> state, sizeof(int) * (dimension * dimension +3), 
 				cudaMemcpyHostToDevice);
 		}
 
@@ -313,8 +331,8 @@ AS_NodePointer * AS_search(AS_Config * config){
 			for (int j = 0; j < NUM_CHOICES; j++) {
 				//printf("%d: %d\n", j, fillResult[i * NUM_CHOICES + j]);
 				if (fillResult[i * NUM_CHOICES + j] == 1) {
-					int dx = (1 - j / 2) * (1 - (1 - j) * 2);
-					int dy = (j / 2) * (1 - (3-j) * 2);
+					int dy = (1 - j / 2) * (1 - (1 - j) * 2);
+					int dx = (j / 2) * (1 - (3-j) * 2);
 					State * cur = (State *) malloc (sizeof(State) * (l+3));
 					for (int k = 0; k < l; k++) {
 						cur[k] = *((State *)(nodes[i]->state)+k);
@@ -326,7 +344,7 @@ AS_NodePointer * AS_search(AS_Config * config){
 					cur[l+2] = j;
 					//printf("  (%d, %d)\n", dx, dy);
 					AS_Node * created = newASNode(getHeuristic(cur));
-					created->state = start;
+					created->state = cur;
 					Queue_insert(queue, created);
 				}
 			}
@@ -336,17 +354,9 @@ AS_NodePointer * AS_search(AS_Config * config){
 	return path;
 }
 
-double getHeuristic(void * state){
+double getHeuristic(State * state){
 	State * s = (State *) state;
-	int l = dimension * dimension;
 	double h = 0;
-	if (heuristic == HAMMING) {
-		for(int i = 0; i<l-1; i++){
-			if(s[i] != 0 && s[i] != i+1) 
-				h++;
-		}
-	}
-	else if (heuristic == MANHATTAN) {
 		for(int i = 0; i<dimension; i++) {
 			for (int j = 0; j<dimension; j++) {
 				int order = i * dimension + j;
@@ -354,7 +364,6 @@ double getHeuristic(void * state){
 					h += abs(i - (s[order]-1)/dimension) + abs(j - (s[order]-1)%dimension);
 			}
 		}
-	}
 
 	return h;
 }
@@ -370,12 +379,12 @@ AS_Node * createNode(State * oldState, int swapIndexA, int swapIndexB){
 	return node;
 }
 
-AS_Node * newASNode(double heuristic, double cost, AS_Node * parent){
+AS_Node * newASNode(double h, double cost, AS_Node * parent){
 	AS_Node * node = new AS_Node;
 	node->data = NULL;
 	node->state = NULL;
 	node->parent = parent;
-	node->heuristic = heuristic;
+	node->heuristic = h;
 	node->cost = cost;
 	node->status = AS_STATUS_IDLE;
 	node->childrenLength = 0;
