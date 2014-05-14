@@ -9,6 +9,21 @@
 #PBS -A mp309
 
 cd $PBS_O_WORKDIR
-
+aprun -d 1 -n 1 -N 1 ./serial -d 4
+aprun -d 1 -n 1 -N 1 ./pre-parallel -d 4
+export OMP_NUM_THREADS=1
+aprun -d 1 -n 1 -N 1 ./openmp -d 4
+export OMP_NUM_THREADS=2
+aprun -d 2 -n 1 -N 1 ./openmp -d 4
 export OMP_NUM_THREADS=4
 aprun -d 4 -n 1 -N 1 ./openmp -d 4
+export OMP_NUM_THREADS=6
+aprun -d 6 -n 1 -N 1 ./openmp -d 4
+export OMP_NUM_THREADS=12
+aprun -d 12 -n 1 -N 1 ./openmp -d 4
+export OMP_NUM_THREADS=18
+aprun -d 18 -n 1 -N 1 ./openmp -d 4
+export OMP_NUM_THREADS=24
+aprun -d 24 -n 1 -N 1 ./openmp -d 4
+
+
